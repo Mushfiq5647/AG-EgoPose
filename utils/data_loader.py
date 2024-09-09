@@ -5,11 +5,10 @@ import torchvision.transforms as transforms
 import torch.utils.data as data
 import random
 import json
-
 from PIL import Image
-from build_vocab import Vocabulary
-from build_vocab import build_vocab
-from build_annotation import Annotation
+from utils.build_vocab import Vocabulary
+from utils.build_vocab import build_vocab
+from utils.build_annotation import Annotation
 import os
 import argparse
 
@@ -37,7 +36,8 @@ class PoseDataset(data.Dataset):
 		poses = []
 		poses2 = []
 		homography = []
-		for i in range (end-self.seq_length, end):
+		for i in range(end-self.seq_length, end):
+			# print("Image Count", i, end)
 			image, upp_pose, low_pose, h, pose2 = getPair(imroot, hroot, oproot, path, vocab, i)
 			if self.transform is not None:
 				image = self.transform(image)
@@ -45,6 +45,7 @@ class PoseDataset(data.Dataset):
 			images.append(image)
 			homography.append(h)
 			poses2.append(pose2)
+		homography = [list(h) for h in homography]
 		homography = torch.Tensor(homography)
 		images = torch.stack(images)
 		target = torch.Tensor(poses)
@@ -60,28 +61,38 @@ def collate_fn(data):
 	""" Creates mini-batch tensors from the list of tuples (images, poses) """
 	data.sort(key=lambda x: len(x[1]), reverse=True)
 	images, poses, homography, poses2 = zip(*data)
+	print("Pose length:", len(poses))
+	# with open("sample_poses.txt", "w") as f:
+	# 	for pose in poses:
+	# 		f.write(str(pose) + '\n')
+		# print("Image length:", len(images))
 	images = torch.stack(images, 0)
 	lengths = [len(pose) for pose in poses]
-	targets = torch.zeros(len(poses), max(lengths)).long()
+	max_length = max(lengths)
+	targets = torch.zeros(len(poses), max_length, 2).long()  # Now a 3D tensor to hold [batch_size, sequence_length, 2]
+	print("Target shape:", targets.shape)
 	for i, pose in enumerate(poses):
 		end = lengths[i]
-		targets[i, :end] = pose[:end]
-
+		targets[i, :end, :] = pose[:end]
 	homography = torch.stack(homography, 0)
+	# with open('sample_targets.txt', 'w') as f:
+	# 	for i in range(min(10, targets.shape[0])):  # limiting to the first 10 samples for brevity
+	# 		f.write(f"Sample {i + 1}:\n")
+	# 		f.write(f"{targets[i]}\n")
+	# 		f.write("\n")
 	poses2 = torch.stack(poses2, 0)
 	return images, targets, homography, poses2, lengths
-
 
 def getPair(imroot, hroot, oproot, path, vocab, index):
 	""" helper method to get the image corresponding to the pair """
 	if index <= 1:
 		h = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0] * 15;
 	else:
-		file = open(hroot + "/" + path + "/h" + str(index - 2) + ".txt")
+		file = open(hroot + "/" + path + "/features/homography/h" + str(index - 2) + ".txt")
 		h = file.read().split()
 		h = map(float, h)
 
-	with open(oproot + "/" + path + "/imxx" + str(index) + ".txt", 'r') as f:
+	with open(oproot + "/" + path + "/features/openpose/output_json/imxx" + str(index) + "_keypoints.json", 'r') as f:
 		js = json.loads(f.read())
 		if ('joints' not in js) or (len(js['joints']) <= 0):
 			pose2 = [0] * 48
@@ -89,7 +100,9 @@ def getPair(imroot, hroot, oproot, path, vocab, index):
 			pose2 = js['joints']
 	upp_cluster = vocab.upp_ids[path][index-1]
 	low_cluster = vocab.low_ids[path][index-1]
-	path = path + "/imxx" + str(index) + ".jpg";
+	# print("Upper Cluster:", upp_cluster)
+	# print("Lower Cluster:", low_cluster)
+	path = path + "/synchronized/frames/imxx" + str(index) + ".jpg"
 	image = Image.open(os.path.join(imroot, path)).convert('RGB')
 	return image, upp_cluster, low_cluster, h, pose2
 
@@ -99,5 +112,5 @@ def get_loader(annotation, imroot, hroot, oproot, vocab, transform, batch_size, 
 	ds = PoseDataset(annotation=annotation, imroot=imroot, hroot=hroot, oproot=oproot, vocab=vocab, 
 		seq_length=seq_length, transform=transform)
 	data_loader = torch.utils.data.DataLoader(dataset=ds, batch_size=batch_size,
-		shuffle=shuffle, num_workers=num_workers, collate_fn=collate_fn)
+		shuffle=shuffle, num_workers=num_workers, collate_fn=collate_fn, pin_memory=True)
 	return data_loader

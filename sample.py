@@ -95,7 +95,7 @@ def main(args):
 	sampled_ids = decoder.sample(feature, homography, openpose)
 
 	end = time.time()
-	print "duration", (end-start)
+	print("duration", (end-start))
 
 	sampled_ids = sampled_ids[0].cpu().numpy()
 	sampled_poses = []
