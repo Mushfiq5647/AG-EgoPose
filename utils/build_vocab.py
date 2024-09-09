@@ -14,8 +14,6 @@ class Vocabulary(object):
 
 	def get_shapes(self):
 		return (len(self.upp_poses), len(self.low_poses))
-
-
 def build_vocab(ids_upp, ids_low, cluster_upp, cluster_low):
 	""" Sample function to build the vocabulary wrapper: customize accordingly
 		Note: We provide starter vocab file in 'vocab/'

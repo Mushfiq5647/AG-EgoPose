@@ -4,6 +4,7 @@ you2me_ds_release_cmu (1)/
 you2me_ds_release_kinect/
 annotation.json/
 write.json
+annotation.json
 sample_outputs.txt
 sample_poses.txt
 sample_targets.txt
