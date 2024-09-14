@@ -3,7 +3,7 @@
 import argparse
 import os
 import pickle
-
+import json
 
 class Annotation(object):
 	""" Simple vocabulary wrapper """
@@ -19,10 +19,7 @@ class Annotation(object):
 		anns.append((path, range))
 
 
-def build_annotation(base_dir):
-	""" sample function to build the annotation wrapper: customize accordingly
-		Note: We provide starter annotation file in 'vocab/'
-	"""
+def build_annotation():
 	annotation = Annotation()
 	categories = {"patty26":2304,
 				  "patty27":934,
@@ -37,8 +34,10 @@ def build_annotation(base_dir):
 				  "catch42":2258,
 				  "convo43":3010, 
 				  "convo46":3610, 
-				  "convo47":3980}
-		
+				  "convo47":3980,
+				  "sport56": 2934,
+				  "sport58": 4913 }
+
 	for cat in categories:
 		count = 0
 		count = categories[cat]
@@ -50,16 +49,26 @@ def build_annotation(base_dir):
 
 
 def main(args):
-	anns = build_annotation(args.base_dir)
+	anns = build_annotation()
 	print ("num sequences:", len(anns))
 	annotation_path = args.annotation_path
 	with open(annotation_path, 'wb') as f:
 		pickle.dump(anns, f)
 
+	with open(annotation_path, 'rb') as f:
+		train_annotations = pickle.load(f)
+
+	annotations_dict = {
+		"annotations": train_annotations.anns
+	}
+
+	with open('annotations.json', 'w') as f:
+		json.dump(annotations_dict, f, indent=4)
+
+
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
-	parser.add_argument('--base_dir', type=str, required=True, help='path to base dir for all captures')
 	parser.add_argument('--annotation_path', type=str, required=True, help='path to base dir for all captures')
 	args = parser.parse_args()
 	main(args)
