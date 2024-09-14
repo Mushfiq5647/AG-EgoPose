@@ -34,81 +34,59 @@ class EncoderCNN(nn.Module):
 
 
 class DecoderRNN(nn.Module):
-	def __init__(self, embed_size, hidden_size, vocab_size, output_size, num_layers,
-				 num_homog=15, homog_size=9, pose2_size=48):
+	def __init__(self, embed_size, hidden_size, vocab_size, sequence_length, num_layers, use_homog=True, use_pose2=True, output_size=75,
+				 num_homog=15, homog_size=9, pose2_size=75):
 		super(DecoderRNN, self).__init__()
-		self.embed = nn.Embedding(vocab_size, embed_size)
-		self.lstm = nn.LSTM((embed_size*3) + (homog_size * num_homog) + pose2_size,
-			hidden_size, num_layers, batch_first=True)
-		self.linear = nn.Linear(hidden_size, (output_size+1))
-		print("Low Body Pose:", output_size)
-		self.embed_size = embed_size
+		# self.embed = nn.Embedding(vocab_size, embed_size)
+		self.use_homog = use_homog
+		self.use_pose2 = use_pose2
+		self.lstm_full_input_size = output_size + sequence_length +  (homog_size * num_homog) + pose2_size
+		self.lstm_reduced_input_size = output_size + sequence_length
+		if use_homog and use_pose2:
+			self.lstm_input_size = self.lstm_full_input_size
+		else:
+			self.lstm_input_size = self.lstm_reduced_input_size
+		self.input_projection = nn.Linear(self.lstm_reduced_input_size, self.lstm_full_input_size)
+		self.lstm = nn.LSTM(self.lstm_full_input_size, hidden_size, num_layers, batch_first=True)
+		self.linear = nn.Linear(hidden_size, (output_size))
+		# self.embed_size = embed_size
 		self.num_homog = num_homog
 		self.homog_size = homog_size
 		self.pose2_size = pose2_size
+		self.output_size = output_size
+		self.sequence_length = sequence_length
 
-
-	def forward(self, features, poses, homography, poses2, lengths):
+	def forward(self, features, gt_poses, lengths, homography=None, poses2=None):
 		"""Decode image feature vectors and generate pose sequences."""
 		device = features.device
+		gt_poses = gt_poses.to(device)
+		# Concatenate along the last dimension (gt_poses, features, homography, and poses2)
+		embeddings = torch.cat((gt_poses, features), dim=-1)
+		if self.use_homog and self.use_pose2:
+			homography = homography.to(device)
+			poses2 = poses2.to(device)
+			embeddings = torch.cat((embeddings, homography, poses2), dim=-1)
+		else:
+			embeddings = self.input_projection(embeddings)
 
-		# Embed poses and move to the correct device
-		print(f"Poses shape before embedding: {poses.shape}")
-		with open('sample_poses.txt', 'a') as f:
-			f.write(f'{poses[0]}\n')
-		# print(f"Poses before embedding: {poses[0]}")
-		print(f"Poses min/max values: {poses.min()}, {poses.max()}")
-		print("Embedding layer input size:", self.embed.num_embeddings)
-		# poses = self.embed(poses).to(device)
+		print("Embeddings shape:", embeddings.size(-1))
+		print("LSTM size:", self.lstm_input_size)
 
-		try:
-			poses = self.embed(poses).to(device)
-		except Exception as e:
-			print(f"Error in embedding: {e}")
+		# assert embeddings.size(-1) == self.lstm_input_size, \
+		# 	f"Input size mismatch: expected {self.lstm_input_size}, but got {embeddings.size(-1)}"
 
-			print("Poses:", poses)
-			raise
-
-		# Print shapes for debugging
-		# print(f"Embedded poses shape: {poses.shape}")
-		# print(f"Features shape: {features.shape}")
-		# print(f"Homography shape: {homography.shape}")
-		# print(f"Poses2 shape: {poses2.shape}")
-		# Flatten the poses to match the dimensions of features, homography, and poses2
-		# This changes poses from [32, 512, 2, 256] to [32, 512, 512]
-		poses = poses.view(poses.size(0), poses.size(1), -1)
-		print(f"Reshaped poses shape: {poses.shape}")
-		poses[:, 0, :] = 0
-		# Move other tensors to the correct device
-		print(device)
-		homography = homography.to(device)
-		print(f"Homography shape: {homography.shape}")
-		print(f"Poses shape: {poses.shape}")
-
-		print(f"Any NaNs in homography: {torch.isnan(homography).any()}")
-		print(f"Any infinities in homography: {torch.isinf(homography).any()}")
-
-		poses2 = poses2.to(device)
-
-		# Concatenate along the last dimension
-		embeddings = torch.cat((poses, features, homography, poses2), dim=-1)
-
-		expected_input_size = (self.embed_size * 3) + (self.homog_size * self.num_homog) + self.pose2_size
-		print(f"Expected LSTM input size: {expected_input_size}")
-		print(f"Actual LSTM input size: {embeddings.shape[-1]}")
-
-		assert embeddings.shape[-1] == expected_input_size, \
-			f"Expected input size {expected_input_size}, but got {embeddings.shape[-1]}"
 
 		# Pack the padded sequence
 		packed = pack_padded_sequence(embeddings, lengths, batch_first=True)
 
-		# Check the packed sequence size before feeding into LSTM
-		print(f"Packed sequence shape: {packed.data.shape}")
-
+		# Pass through LSTM
 		hiddens, _ = self.lstm(packed)
-		outputs = self.linear(hiddens[0])
+
+		# Pass the hidden states through the linear layer to get the final pose regression output
+		outputs = self.linear(hiddens[0])  # We are predicting 75 pose coordinates
+
 		return outputs
+
 
 	def sample(self, features, homography, openpose, states=None):
 		sampled_ids = []

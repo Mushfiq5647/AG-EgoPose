@@ -42,38 +42,13 @@ def main(args):
 	with open(args.vocab_path, 'rb') as f:
 		vocab = pickle.load(f)
 	print("cluster sizes: ", vocab.get_shapes())
-	vocab_dict = {
-		'upp_poses': vocab.upp_poses,
-		'upp_ids': vocab.upp_ids,
-		'low_poses': vocab.low_poses,
-		'low_ids': vocab.low_ids
-	}
-
-
-	# Save the JSON string to a .txt file
-
-
-	print("Contents have been saved to 'vocab_contents.txt'")
 
 	with open(args.annotation_path, 'rb') as f:
 		annotation = pickle.load(f)
-	print ("annotations size:", len(annotation))
-
-	annotations_dict = {
-		"annotations": annotation.anns
-	}
-
-	# Save the dictionary to a JSON file
-	with open('write.json', 'w') as json_file:
-		json.dump(vocab_dict, json_file, indent=4)
-
-
-	with open('annotation.json', 'w') as json_file:
-		json.dump(annotations_dict, json_file, indent=4)
-
+	print("annotations size:", len(annotation))
 	
 	# build data loader
-	data_loader = get_loader(annotation, args.image_dir, args.h_dir, args.openpose_dir, vocab, transform, 
+	data_loader = get_loader(annotation, args.image_dir, args.h_dir, args.openpose_dir, vocab, transform,
 		args.batch_size, shuffle=True, num_workers=args.num_workers, seq_length=args.seq_length)
 	print("Data Loading complete", len(data_loader))
 	print("Total dataset", len(data_loader.dataset))
@@ -81,27 +56,16 @@ def main(args):
 	vocab_size = upp_size
 	encoder = EncoderCNN(args.embed_size).to(device)
 
-	if args.upp:
-		model_dir = os.path.abspath('./utils/train_upp')
-		decoder = DecoderRNN(args.embed_size, 
-							 args.hidden_size, 
-							 upp_size+1,
-							 upp_size,
-							 args.num_layers).to(device)
+	model_dir = os.path.abspath('./utils/trained_ckpt')
+	decoder = DecoderRNN(args.embed_size,
+						 args.hidden_size,
+						 upp_size+1,
+						 args.seq_length,
+						 args.num_layers).to(device)
 
-	elif args.low:
-		model_dir = os.path.abspath('./utils/train_low')
-		decoder = DecoderRNN(args.embed_size, 
-							 args.hidden_size, 
-							 vocab_size+1,
-							 low_size,
-							 args.num_layers).to(device)
-	else:
-		print('Please specify upper/lower body model to train')
-		exit(0)
 
 	# loss and optimizer
-	criterion = nn.CrossEntropyLoss()
+	criterion = nn.MSELoss()
 	params = list(decoder.parameters()) + list(encoder.linear.parameters()) + list(encoder.bn.parameters())
 	optimizer = torch.optim.Adam(params, lr=args.learning_rate)
 	# scaler = GradScaler()
@@ -110,41 +74,26 @@ def main(args):
 	# print ("total iter", total_step)
 	for epoch in range(args.num_epochs):
 		print("Printing epoch:", epoch)
-		for i, (images, poses, homography, poses2, lengths) in enumerate(data_loader):
+		for i, (images, gt_egoposes, homography, poses2, lengths) in enumerate(data_loader):
 			print("Printing iteration number:", i)
 			images = images.to(device)
-			poses = poses.to(device)
-			# if args.upp:
-			# 	# Select the first column for upper body pose
-			# 	poses = poses[:, :, 0]  # Shape: [batch_size, sequence_length]
-			# else:
-			# 	# Select the second column for lower body pose
-			# 	poses = poses[:, :, 1]  # Shape: [batch_size, sequence_length]
-
+			gt_egoposes = gt_egoposes.to(device)
 
 			# Squeeze the targets to make them 1D
-			targets = pack_padded_sequence(poses, lengths, batch_first=True)[0]
-			targets = targets[:, 1]
+			targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
 
-			print("In train Pose shape:", poses.shape)
+			print("In train Pose shape:", gt_egoposes.shape)
 			print("In train Modified targets shape:", targets.shape)
-			print("Modified targets:")
-			print(targets[0:10])
-			with open('sample_targets.txt', 'a') as f:
-				f.write(f'{targets[0]}\n')
+			# with open('sample_targets.txt', 'a') as f:
+			# 	f.write(f'{targets}\n')
 
 			print("Before feature")
 			# Forward pass
 			# with autocast():
 			features = encoder(images)
-			outputs = decoder(features, poses, homography, poses2, lengths)
-			with open('sample_outputs.txt', 'a') as f:
-				f.write(f'{outputs[0]}\n')
-			# print(f"outputs shape: {outputs.shape}")
-			# print(f"targets shape: {targets.shape}")
-			# print(outputs[:10])
-
-			# Compute loss
+			outputs = decoder(features, gt_egoposes, lengths, homography, poses2)
+			# with open('sample_outputs.txt', 'a') as f:
+			# 	f.write(f'{outputs}\n')
 			loss = criterion(outputs, targets)
 			if torch.isnan(loss):
 				print(f"NaN detected! Epoch: {epoch}, Iteration: {i}")
@@ -167,7 +116,6 @@ def main(args):
 						   os.path.join(model_dir, 'decoder-{}-{}.ckpt'.format(epoch + 1, i + 1)))
 				torch.save(encoder.state_dict(),
 						   os.path.join(model_dir, 'encoder-{}-{}.ckpt'.format(epoch + 1, i + 1)))
-
 
 
 if __name__== '__main__':

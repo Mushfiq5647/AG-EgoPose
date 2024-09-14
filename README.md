@@ -44,6 +44,10 @@ Then run the following command:
 
 `python train.py --model_path ./utils/model.py --vocab_path ./vocab/vocab_py3.pkl --annotation_path ./vocab/annotation.pkl --upp`
 
+
+For testing:
+`python test.py --encoder_path ./utils/trained_ckpt/encoder-1-61.ckpt --decoder_path ./utils/trained_ckpt/decoder-1-61.ckpt --output_dir ./outputs --vocab_path ./vocab/vocab_py3.pkl --test_annotation_path ./vocab/test_annotation.pkl`
+
 Change flag `--upp` to `--low` to train the lower body model.
 
 ## License
