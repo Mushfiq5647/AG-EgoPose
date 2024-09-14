@@ -1,10 +1,9 @@
-utils/train_low
+utils/trained_ckpt
 utils/train_upp
 you2me_ds_release_cmu (1)/
 you2me_ds_release_kinect/
-annotation.json/
 write.json
-annotation.json
+annotations.json
 sample_outputs.txt
 sample_poses.txt
 sample_targets.txt
