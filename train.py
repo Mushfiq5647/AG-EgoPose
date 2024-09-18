@@ -11,6 +11,9 @@ import _compat_pickle
 from utils.data_loader import get_loader
 from utils.build_vocab import Vocabulary
 from utils.build_annotation import Annotation
+from action_recognition import ActionFormerFeatureExtractor
+from actionformer.modeling import make_meta_arch
+from actionformer.config import load_config
 from utils.model import EncoderCNN, DecoderRNN
 from torch.nn.utils.rnn import pack_padded_sequence
 from torchvision import transforms
@@ -27,6 +30,25 @@ import os
 
 
 def main(args):
+	config = load_config(args.config_path)
+	print(config['model_name'])
+	actionformer_model = make_meta_arch(config['model_name'], **config['model'])
+	checkpoint = torch.load('actionformer/epoch_015.pth.tar', map_location=torch.device('cuda'))
+	state_dict = checkpoint['state_dict']
+	new_state_dict = {key.replace('module.', ''): value for key, value in state_dict.items()}
+	actionformer_model.load_state_dict(new_state_dict)
+	actionformer_model = actionformer_model.to(device)
+	actionformer_model.eval()
+
+	# Wrap the model with the feature extractor
+	actionformer_feature_extractor = ActionFormerFeatureExtractor(actionformer_model)
+	print(actionformer_feature_extractor)
+	# Extract features without updating weights
+
+	# Freeze ActionFormer model weights
+	for param in actionformer_model.parameters():
+		param.requires_grad = False
+
 
 	# create model directory
 	if not os.path.exists(args.model_path):
@@ -54,7 +76,7 @@ def main(args):
 	print("Total dataset", len(data_loader.dataset))
 	upp_size, low_size = vocab.get_shapes()
 	vocab_size = upp_size
-	encoder = EncoderCNN(args.embed_size).to(device)
+	encoder = EncoderCNN(args.embed_size, actionformer_feature_extractor).to(device)
 
 	model_dir = os.path.abspath('./utils/trained_ckpt')
 	decoder = DecoderRNN(args.embed_size,
@@ -77,6 +99,7 @@ def main(args):
 		for i, (images, gt_egoposes, homography, poses2, lengths) in enumerate(data_loader):
 			print("Printing iteration number:", i)
 			images = images.to(device)
+			print("Image shape", images.shape)
 			gt_egoposes = gt_egoposes.to(device)
 
 			# Squeeze the targets to make them 1D
@@ -99,8 +122,6 @@ def main(args):
 				print(f"NaN detected! Epoch: {epoch}, Iteration: {i}")
 				# Optionally break the loop or save the current state for debugging
 				break
-
-			# Backward and optimize with mixed precision
 			decoder.zero_grad()
 			encoder.zero_grad()
 			loss.backward()
@@ -120,6 +141,7 @@ def main(args):
 
 if __name__== '__main__':
 	parser = argparse.ArgumentParser()
+	parser.add_argument('--config_path', type=str, default='actionformer/config/anet_tsp.yaml', help='path to the config file')
 	parser.add_argument('--model_path', type=str, required=True, help='path for saving trained models')
 	parser.add_argument('--vocab_path', type=str, required=True, help='path for vocabulary wrapper')
 	parser.add_argument('--annotation_path', type=str, required=True, help='path for annotation wrapper')

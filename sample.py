@@ -7,6 +7,9 @@ import pickle
 import time
 import os
 import json
+from action_recognition import ActionFormerFeatureExtractor
+from actionformer.modeling import make_meta_arch
+from actionformer.config import load_config
 
 from torchvision import transforms
 from PIL import Image
@@ -59,6 +62,26 @@ def load_video(video_path, seq_length, transform=None):
 
 
 def main(args):
+
+	config = load_config(args.config_path)
+	print(config['model_name'])
+	actionformer_model = make_meta_arch(config['model_name'], **config['model'])
+	checkpoint = torch.load('actionformer/epoch_015.pth.tar', map_location=torch.device('cuda'))
+	state_dict = checkpoint['state_dict']
+	new_state_dict = {key.replace('module.', ''): value for key, value in state_dict.items()}
+	actionformer_model.load_state_dict(new_state_dict)
+	actionformer_model = actionformer_model.to(device)
+	actionformer_model.eval()
+
+	# Wrap the model with the feature extractor
+	actionformer_feature_extractor = ActionFormerFeatureExtractor(actionformer_model)
+	print(actionformer_feature_extractor)
+	# Extract features without updating weights
+
+	# Freeze ActionFormer model weights
+	for param in actionformer_model.parameters():
+		param.requires_grad = False
+
 	transform = transforms.Compose([
 		transforms.Resize(args.crop_size),
 		transforms.ToTensor(),
@@ -69,16 +92,16 @@ def main(args):
 		vocab = pickle.load(f)
 
 	upp_size, low_size = vocab.get_shapes()
+	vocab_size = upp_size
 	start = time.time()
-	encoder = EncoderCNN(args.embed_size).eval()
+	encoder = EncoderCNN(args.embed_size, actionformer_feature_extractor).eval()
 
-	if args.upp:
-		decoder = DecoderRNN(args.embed_size, args.hidden_size, upp_size+1, args.num_layers)
-	elif args.low:
-		decoder = DecoderRNN(args.embed_size, args.hidden_size, low_size+1, args.num_layers)
-	else:
-		print('Please specify upper/lower body model to test')
-		exit(0)
+	decoder = DecoderRNN(args.embed_size,
+						 args.hidden_size,
+						 upp_size+1,
+						 args.seq_length,
+						 args.num_layers).to(device)
+
 
 	decoder.train(False)
 	encoder = encoder.to(device)
@@ -93,6 +116,7 @@ def main(args):
 	homography = load_homography(args.image_dir, args.h_dir, args.seq_length)
 	openpose = load_openpose(args.image_dir, args.openpose_dir, args.seq_length)
 	sampled_ids = decoder.sample(feature, homography, openpose)
+	print("Sample Ids", sampled_ids)
 
 	end = time.time()
 	print("duration", (end-start))
@@ -123,6 +147,7 @@ def main(args):
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--vocab_path', type=str, required=True, help='path for vocabulary wrapper')
+	parser.add_argument('--config_path', type=str, default='actionformer/config/anet_tsp.yaml', help='path to the config file')
 	parser.add_argument('--output', type=str, required=True, help='output directory to save the pose files to')
 	parser.add_argument('--encoder_path', type=str, required=True, help='path for trained encoder')
 	parser.add_argument('--decoder_path', type=str, required=True, help='path for trained decoder')
@@ -130,9 +155,9 @@ if __name__ == '__main__':
 	parser.add_argument('--upp', action='store_true', help='set flag if training upper body model')
 	parser.add_argument('--low', action='store_true', help='set flag if training lower body model')
 
-	parser.add_argument('--image_dir', type=str, default='images/', help='directory for resized images')
-	parser.add_argument('--h_dir', type=str, default='homographies/', help='directory for resized images')
-	parser.add_argument('--openpose_dir', type=str, default='openpose/', help='directory for resized images')
+	parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect/patty34/synchronized/frames', help='directory for resized images')
+	parser.add_argument('--h_dir', type=str, default='you2me_ds_release_kinect/kinect/patty34/features/homography', help='directory for resized images')
+	parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect/patty34/features/openpose', help='directory for resized images')
 
 	parser.add_argument('--embed_size', type=int , default=256, help='dimension of word embedding vectors')
 	parser.add_argument('--hidden_size', type=int , default=512, help='dimension of lstm hidden states')
