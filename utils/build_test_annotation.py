@@ -10,10 +10,10 @@ class TestAnnotation(object):
     """ Simple vocabulary wrapper """
 
     def __init__(self):
-        self.test_anns = []
+        self.anns = []
 
     def __len__(self):
-        return len(self.test_anns)
+        return len(self.anns)
 
 
 def build_test_annotation():
@@ -24,7 +24,7 @@ def build_test_annotation():
                        "patty32":2657,
                        "patty34":1787,
                        "patty35":1421,
-                       "catch55":2536,
+                       "catch55":2257,
                        "convo53":2323,
                        "convo54":2808,
                        "convo59":2887,
@@ -34,24 +34,24 @@ def build_test_annotation():
         count = 0
         count = test_categories[cat]
         while (count - 256) > 0:
-            test_annotation.test_anns.append((cat, count))
+            test_annotation.anns.append((cat, count))
             count -= 256
-        test_annotation.test_anns.append((cat, 257))
+        test_annotation.anns.append((cat, 257))
     return test_annotation
 
 
 def main(args):
-    test_anns = build_test_annotation()
-    print("num sequences:", len(test_anns))
+    anns = build_test_annotation()
+    print("num sequences:", len(anns))
     test_annotation_path = args.test_annotation_path
     with open(test_annotation_path, 'wb') as f:
-        pickle.dump(test_anns, f)
+        pickle.dump(anns, f)
 
     with open(test_annotation_path, 'rb') as f:
         test_annotations = pickle.load(f)
 
     annotations_dict = {
-        "annotations": test_annotations.test_anns
+        "annotations": test_annotations.anns
     }
 
     with open('test_annotations.json', 'w') as f:

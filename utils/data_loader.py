@@ -44,7 +44,7 @@ class PoseDataset(data.Dataset):
 		vocab = self.vocab
 		annotation = self.annotation
 		test_mode = self.test_mode
-		path, end = annotation.test_anns[index]
+		path, end = annotation.anns[index]
 		images = []
 		gt_egoposes = []
 		poses = []
@@ -64,7 +64,6 @@ class PoseDataset(data.Dataset):
 		with open('sample_targets.txt', 'a') as f:
 			f.write(f'{target_egoposes}\n')
 		if homography is not None and all(h is not None for h in homography):
-			print("All elements in homography are valid")
 			homography = [list(h) for h in homography]
 			homography = torch.Tensor(homography)
 			poses2 = torch.Tensor(poses2)
@@ -123,10 +122,6 @@ def collate_fn(data):
 	""" Creates mini-batch tensors from the list of tuples (images, poses) """
 	data.sort(key=lambda x: len(x[1]), reverse=True)
 	images, target_egoposes, homography, poses2 = zip(*data)
-	print("Pose length:", len(target_egoposes))
-	# with open("sample_poes
-	# 		f.write(str(pose) + '\n')
-		# print("Image length:", len(images))
 	images = torch.stack(images, 0)
 	lengths = [len(pose) for pose in target_egoposes]
 	max_length = max(lengths)
@@ -138,14 +133,11 @@ def collate_fn(data):
 	for i, pose in enumerate(target_egoposes):
 		end = lengths[i]
 		targets[i, :end, :] = pose[:end]
-	if isinstance(homography, torch.Tensor) and isinstance(poses2, torch.Tensor):
+	if isinstance(homography[0], torch.Tensor) and isinstance(poses2[0], torch.Tensor):
 		homography = torch.stack(homography, 0)
-		# with open('sample_targets.txt', 'w') as f:
-		# 	for i in range(min(10, targets.shape[0])):  # limiting to the first 10 samples for brevity
-		# 		f.write(f"Sample {i + 1}:\n")
-		# 		f.write(f"{targets[i]}\n")
-		# 		f.write("\n")
+		print("Homography stacked to tensor")
 		poses2 = torch.stack(poses2, 0)
+		print("Poses2 stacked to tensor")
 
 	return images, targets, homography, poses2, lengths
 
