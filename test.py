@@ -57,16 +57,14 @@ def main(args):
 
     # Build data loader
     data_loader = get_loader(annotation, args.image_dir, args.h_dir, args.openpose_dir, vocab, transform,
-                             args.batch_size, shuffle=False, num_workers=args.num_workers, seq_length=args.seq_length, test_mode=True)
+                             args.batch_size, shuffle=False, num_workers=args.num_workers, seq_length=args.seq_length)
 
     print("Batch size", len(data_loader.dataset))
     # Load models
     encoder = EncoderCNN(args.embed_size).to(device)
     decoder = DecoderRNN(args.embed_size, args.hidden_size, vocab_size+1,
                          args.seq_length,
-                         args.num_layers,
-                         use_homog=False,
-                         use_pose2=False).to(device)
+                         args.num_layers).to(device)
 
     # Load trained models
     encoder.load_state_dict(torch.load(args.encoder_path))
@@ -84,7 +82,7 @@ def main(args):
                 targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
                 # Forward pass
                 features = encoder(images)
-                outputs = decoder(features, gt_egoposes, lengths)
+                outputs = decoder(features, gt_egoposes, lengths, homography, poses2)
 
                 # Calculate MPJPE
                 mpjpe = mean_per_joint_position_error(outputs, targets)
@@ -109,8 +107,8 @@ if __name__ == '__main__':
 
     # Directories
     parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for resized images')
-    parser.add_argument('--h_dir', type=str, help='directory for homography')
-    parser.add_argument('--openpose_dir', type=str, help='directory for OpenPose JSON files')
+    parser.add_argument('--h_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for homography')
+    parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for OpenPose JSON files')
 
     # Model parameters
     parser.add_argument('--embed_size', type=int, default=256, help='dimension of word embedding vectors')
