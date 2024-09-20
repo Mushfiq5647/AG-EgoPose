@@ -24,7 +24,7 @@ def build_test_annotation():
                        "patty32":2657,
                        "patty34":1787,
                        "patty35":1421,
-                       "catch55":2536,
+                       "catch55":2257,
                        "convo53":2323,
                        "convo54":2808,
                        "convo59":2887,

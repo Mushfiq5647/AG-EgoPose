@@ -1,4 +1,6 @@
-utils/trained_ckpt
+actionformer/config/
+utils/trained_ckpt_actionformer
+utils/trained_ckpt_you2me
 utils/train_upp
 you2me_ds_release_cmu (1)/
 you2me_ds_release_kinect/

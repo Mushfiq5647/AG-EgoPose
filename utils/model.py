@@ -33,16 +33,11 @@ class EncoderCNN(nn.Module):
 			# 	f.write(str(branch_features))
 			cls_head = actionformer_features.get('cls_head')
 			head = actionformer_features.get('final_output')
-			print("Action Feature Branch size: ", type(stem_features), len(stem_features))
-			print("Action Feature Branch size: ", type(branch_features), len(branch_features))
-			print("Action Feature Class Head size: ", type(cls_head), len(cls_head))
-			print("Action Feature Head size: ", type(head), len(head))
 			# Print the keys where the values are tuples
 			def conv_features(features):
 				device = features.device
 				features = features.permute(0, 2, 1)
 				in_channel = features.size(1)
-				print("Input channel,",in_channel)
 				conv1d_layer = nn.Conv1d(in_channel, out_channels=256, kernel_size=1).to(device)
 				reduced_features = conv1d_layer(features)
 				# Swap dimensions back to the original format [batch_size, channels, sequence_length]
@@ -63,24 +58,20 @@ class EncoderCNN(nn.Module):
 
 					# Concatenate all processed tensors from each tuple along the last dimension (dim=2)
 					final_concatenated_features = torch.cat(processed_features, dim=2)
-					print("Shape after final concatenation:", final_concatenated_features.shape)
+					# print("Shape after final concatenation:", final_concatenated_features.shape)
 					return final_concatenated_features
 
 			# check_elements(head)
 			concat_stem_features = concat_features(stem_features)
-			print("Shape of concatenated stem features:", concat_stem_features.shape)
+			# print("Shape of concatenated stem features:", concat_stem_features.shape)
 			compact_stem_features = conv_features(concat_stem_features)
-			print("Shape of compact stem features", compact_stem_features.shape)
+			# print("Shape of compact stem features", compact_stem_features.shape)
 
 			concat_branch_features = concat_features(branch_features)
-			print("Shape of concatenated branch features:", concat_branch_features.shape)
+			# print("Shape of concatenated branch features:", concat_branch_features.shape)
 			compact_branch_features = conv_features(concat_branch_features)
-			print("Shape of compact branch features", compact_branch_features.shape)
+			# print("Shape of compact branch features", compact_branch_features.shape)
 
-			concat_cls_head_features = concat_features(cls_head)
-			print("Shape of concatenated cls_head features:", concat_cls_head_features.shape)
-			compact_cls_head_features = conv_features(concat_cls_head_features)
-			print("Shape of compact cls_head features", compact_cls_head_features.shape)
 
 
 		images = images.transpose(0, 1)
@@ -103,6 +94,8 @@ class DecoderRNN(nn.Module):
 		# self.embed = nn.Embedding(vocab_size, embed_size)
 		self.use_homog = use_homog
 		self.use_pose2 = use_pose2
+		self.embed_size = embed_size
+		self.output_size = output_size
 		self.lstm_full_input_size = output_size + sequence_length*3 +  (homog_size * num_homog) + pose2_size
 		self.lstm_reduced_input_size = output_size + sequence_length*3
 		if use_homog and use_pose2:
@@ -149,31 +142,40 @@ class DecoderRNN(nn.Module):
 		hiddens, _ = self.lstm(packed)
 
 		# Pass the hidden states through the linear layer to get the final pose regression output
-		outputs = self.linear(hiddens[0])  # We are predicting 75 pose coordinates
+		outputs = self.linear(hiddens[0])
+		print("Output shape", outputs.shape)# We are predicting 75 pose coordinates
 
 		return outputs
 
 
 	def sample(self, features, homography, openpose, states=None):
 		sampled_ids = []
-		embeddings = torch.zeros([1, 1, self.embed_size]).cuda().float()
+		embeddings = torch.zeros([1, 1, self.output_size]).cuda().float()
 		features = features.squeeze(0)
 
+
+		output_list = []
 		for i in range(features.shape[0]):
 			curr_feat = features[i].unsqueeze(0).unsqueeze(1)
 			curr_h = homography[i].unsqueeze(0).unsqueeze(1)
+			# print("Homography shape", curr_h.shape)
 			curr_op = openpose[i].unsqueeze(0).unsqueeze(1)
+			# print("Homography shape", curr_h.shape)
 			tensor = torch.cat((embeddings, curr_feat), 2)
 			tensor = torch.cat((tensor, curr_h.cuda()), 2)
 			tensor = torch.cat((tensor, curr_op.cuda()), 2)	
 			hiddens, states = self.lstm(tensor, states)
-			outputs = self.linear(hiddens.squeeze(1))
-			_, predicted = outputs.max(1)
-			sampled_ids.append(predicted)
-			embeddings = self.embed(predicted)
-			embeddings = embeddings.unsqueeze(1)
-		sampled_ids = torch.stack(sampled_ids, 1)
-		return sampled_ids
+			outputs = self.linear(hiddens[0])
+			output_list.append(outputs)
+			all_outputs = torch.cat(output_list, dim=0)  # Shape: [256, output_size]
+			# print("Output shape", outputs.shape)
+		return all_outputs
+		# 	_, predicted = outputs.max(1)
+		# 	sampled_ids.append(predicted)
+		# 	# embeddings = self.embed(predicted)
+		# 	# embeddings = embeddings.unsqueeze(1)
+		# sampled_ids = torch.stack(sampled_ids, 1)
+		# return sampled_ids
 
 
 

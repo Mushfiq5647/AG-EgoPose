@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
+from actionformer.modeling import make_meta_arch
+from actionformer.config import load_config
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 class ActionFormerFeatureExtractor(nn.Module):
     def __init__(self, action_model):
         super(ActionFormerFeatureExtractor, self).__init__()
@@ -61,8 +64,30 @@ class ActionFormerFeatureExtractor(nn.Module):
         # Optional: Final classification layer output
         features['final_output'] = self.model.cls_head.cls_head(x, mask)
         print("Stem, Branch and Head layers integrated")
-
         return features
+
+def initialize_actionformer(config_file_path):
+    config = load_config(config_file_path)
+    print(config['model_name'])
+    actionformer_model = make_meta_arch(config['model_name'], **config['model'])
+    checkpoint = torch.load('actionformer/epoch_015.pth.tar', map_location=torch.device('cuda'))
+    state_dict = checkpoint['state_dict']
+    new_state_dict = {key.replace('module.', ''): value for key, value in state_dict.items()}
+    actionformer_model.load_state_dict(new_state_dict)
+    actionformer_model = actionformer_model.to(device)
+    actionformer_model.eval()
+
+    # Wrap the model with the feature extractor
+    actionformer_feature_extractor = ActionFormerFeatureExtractor(actionformer_model)
+    print(actionformer_feature_extractor)
+    # Extract features without updating weights
+
+    # Freeze ActionFormer model weights
+    for param in actionformer_model.parameters():
+        param.requires_grad = False
+
+    return actionformer_feature_extractor
+
 
 # # Display keys of extracted features for verification
 # print("Extracted feature types:", extracted_features.keys())

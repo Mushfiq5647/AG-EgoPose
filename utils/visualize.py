@@ -39,8 +39,7 @@ def _set_axes_radius(ax, origin, radius):
 
 def show_upp(joints):
 	fig = plt.figure()
-	ax = fig.gca(projection='3d')
-	ax.set_aspect('equal')
+	ax = fig.add_subplot(111, projection='3d')
 	draw_joints(joints, ax)
 	set_axes_equal(ax)
 	plt.show()

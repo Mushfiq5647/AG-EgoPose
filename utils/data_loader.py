@@ -134,10 +134,10 @@ def collate_fn(data):
 	for i, pose in enumerate(target_egoposes):
 		end = lengths[i]
 		targets[i, :end, :] = pose[:end]
-	# if isinstance(homography, torch.Tensor) and isinstance(poses2, torch.Tensor):
-	# 	print("Homography and poses2 tensor")
-	homography = torch.stack(homography, 0)
-	poses2 = torch.stack(poses2, 0)
+	if isinstance(homography[0], torch.Tensor) and isinstance(poses2[0], torch.Tensor):
+		homography = torch.stack(homography, 0)
+		poses2 = torch.stack(poses2, 0)
+		print("Homography and poses2 tensor")
 
 	return images, targets, homography, poses2, lengths
 

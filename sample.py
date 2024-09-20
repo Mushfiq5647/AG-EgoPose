@@ -7,9 +7,8 @@ import pickle
 import time
 import os
 import json
-from action_recognition import ActionFormerFeatureExtractor
-from actionformer.modeling import make_meta_arch
-from actionformer.config import load_config
+from action_recognition import initialize_actionformer
+import matplotlib.pyplot as plt
 
 from torchvision import transforms
 from PIL import Image
@@ -18,14 +17,15 @@ from utils.build_vocab import Vocabulary
 from utils.model import EncoderCNN, DecoderRNN
 from utils.visualize import show_upp
 
-
+torch.set_printoptions(threshold=float('inf'))
 torch.manual_seed(7)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def load_openpose(video_path, openpose_path, seq_length):
 	openpose = []
 	for i in range(seq_length):
-		with open(os.path.join(video_path, openpose_path, "imxx" + str(i+1) + "_keypoints.json"), 'r') as f:
+		file_path = os.path.join(openpose_path, "imxx" + str(i + 1) + "_keypoints.json")
+		with open(file_path, 'r') as f:
 			js = json.load(f)
 			if ('people' not in js) or (len(js['people']) <= 0) or ('pose_keypoints_2d' not in js['people'][0]):
 				pose2 = [0] * 75
@@ -33,6 +33,7 @@ def load_openpose(video_path, openpose_path, seq_length):
 				pose2 = js['people'][0]['pose_keypoints_2d']
 		openpose.append(pose2)
 	openpose = torch.Tensor(openpose)
+	print("OpenPose Loaded")
 	return openpose
 
 
@@ -41,11 +42,12 @@ def load_homography(video_path, homography_path, seq_length):
 	h = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0] * 15;
 	homography.append(h)
 	for i in range(seq_length-1):
-		file = open(os.path.join(video_path, homography_path, "h" + str(i) + ".txt"))
+		file = open(os.path.join(homography_path, "h" + str(i) + ".txt"))
 		h = file.read().split()
 		h = map(float, h)
 		homography.append(h)
 	homography = torch.Tensor(homography)
+	print("Homography Loaded")
 	return homography
 
 
@@ -58,30 +60,23 @@ def load_video(video_path, seq_length, transform=None):
 		images.append(image)
 
 	images = torch.stack(images).unsqueeze(0)
+	print("Images shape", images.shape)
 	return images
 
+def plot_first_10_outputs(outputs):
+	# Iterate over the first 10 outputs
+	for i in range(10):
+		# Extract and reshape each output to [25, 3] for plotting
+		joints = outputs[i].view(25, 3).cpu().detach().numpy()
+
+		# Use the provided visualization function
+		show_upp(joints)
+
+		# Optionally, pause to control visualization speed
+		plt.pause(1)
 
 def main(args):
-
-	config = load_config(args.config_path)
-	print(config['model_name'])
-	actionformer_model = make_meta_arch(config['model_name'], **config['model'])
-	checkpoint = torch.load('actionformer/epoch_015.pth.tar', map_location=torch.device('cuda'))
-	state_dict = checkpoint['state_dict']
-	new_state_dict = {key.replace('module.', ''): value for key, value in state_dict.items()}
-	actionformer_model.load_state_dict(new_state_dict)
-	actionformer_model = actionformer_model.to(device)
-	actionformer_model.eval()
-
-	# Wrap the model with the feature extractor
-	actionformer_feature_extractor = ActionFormerFeatureExtractor(actionformer_model)
-	print(actionformer_feature_extractor)
-	# Extract features without updating weights
-
-	# Freeze ActionFormer model weights
-	for param in actionformer_model.parameters():
-		param.requires_grad = False
-
+	actionformer_feature_extractor = initialize_actionformer(config_file_path=args.config_path)
 	transform = transforms.Compose([
 		transforms.Resize(args.crop_size),
 		transforms.ToTensor(),
@@ -114,34 +109,18 @@ def main(args):
 	video_tensor = video.to(device)
 	feature = encoder(video_tensor)
 	homography = load_homography(args.image_dir, args.h_dir, args.seq_length)
+	print("Homography shape", homography.shape)
 	openpose = load_openpose(args.image_dir, args.openpose_dir, args.seq_length)
-	sampled_ids = decoder.sample(feature, homography, openpose)
-	print("Sample Ids", sampled_ids)
+	print("Openpose shape", openpose.shape)
+	pose_outputs = decoder.sample(feature, homography, openpose)
+	print("Pose outputs shape", pose_outputs.shape)
+	with open('outputs.txt', 'w') as f:
+		f.write(str(pose_outputs))
 
-	end = time.time()
-	print("duration", (end-start))
+	# Example usage
+	# Assuming 'outputs' is already defined
+	plot_first_10_outputs(pose_outputs)
 
-	sampled_ids = sampled_ids[0].cpu().numpy()
-	sampled_poses = []
-	for pose_id in sampled_ids:
-		if args.upp:
-			pose = vocab.upp_poses[pose_id-1]
-		elif args.low:
-			pose = vocab.low_poses[pose_id-1]
-		else:
-			print('Please specify upper/lower body model to test')
-			exit(0)
-		sampled_poses.append(pose)
-
-		if args.visualize:
-			pose3d = [float(x) for x in pose.split(',')]
-			pose3d = np.reshape(pose3d, (-1,3))
-			show_upp(pose3d)
-
-	for i in range(0, len(sampled_poses)):
-		path = args.output + 'r' + str(i+1) + '.txt'
-		with open(path, 'w') as f:
-			f.write(sampled_poses[i] + '\n')
 
 
 if __name__ == '__main__':
@@ -157,12 +136,12 @@ if __name__ == '__main__':
 
 	parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect/patty34/synchronized/frames', help='directory for resized images')
 	parser.add_argument('--h_dir', type=str, default='you2me_ds_release_kinect/kinect/patty34/features/homography', help='directory for resized images')
-	parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect/patty34/features/openpose', help='directory for resized images')
+	parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect/patty34/features/openpose/output_json', help='directory for resized images')
 
 	parser.add_argument('--embed_size', type=int , default=256, help='dimension of word embedding vectors')
 	parser.add_argument('--hidden_size', type=int , default=512, help='dimension of lstm hidden states')
 	parser.add_argument('--num_layers', type=int , default=2, help='number of layers in lstm')
-	parser.add_argument('--seq_length', type=int, default=1024, help='length of the pose/video sequences')
+	parser.add_argument('--seq_length', type=int, default=256, help='length of the pose/video sequences')
 	parser.add_argument('--crop_size', type=int, default=224 , help='size for randomly cropping images')
 
 	parser.add_argument('--visualize', action='store_true', help='set flag if training lower body model')

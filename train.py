@@ -12,8 +12,7 @@ from utils.data_loader import get_loader
 from utils.build_vocab import Vocabulary
 from utils.build_annotation import Annotation
 from action_recognition import ActionFormerFeatureExtractor
-from actionformer.modeling import make_meta_arch
-from actionformer.config import load_config
+from action_recognition import initialize_actionformer
 from utils.model import EncoderCNN, DecoderRNN
 from torch.nn.utils.rnn import pack_padded_sequence
 from torchvision import transforms
@@ -30,25 +29,26 @@ import os
 
 
 def main(args):
-	config = load_config(args.config_path)
-	print(config['model_name'])
-	actionformer_model = make_meta_arch(config['model_name'], **config['model'])
-	checkpoint = torch.load('actionformer/epoch_015.pth.tar', map_location=torch.device('cuda'))
-	state_dict = checkpoint['state_dict']
-	new_state_dict = {key.replace('module.', ''): value for key, value in state_dict.items()}
-	actionformer_model.load_state_dict(new_state_dict)
-	actionformer_model = actionformer_model.to(device)
-	actionformer_model.eval()
+	# config = load_config(args.config_path)
+	# print(config['model_name'])
+	# actionformer_model = make_meta_arch(config['model_name'], **config['model'])
+	# checkpoint = torch.load('actionformer/epoch_015.pth.tar', map_location=torch.device('cuda'))
+	# state_dict = checkpoint['state_dict']
+	# new_state_dict = {key.replace('module.', ''): value for key, value in state_dict.items()}
+	# actionformer_model.load_state_dict(new_state_dict)
+	# actionformer_model = actionformer_model.to(device)
+	# actionformer_model.eval()
+	#
+	# # Wrap the model with the feature extractor
+	# actionformer_feature_extractor = ActionFormerFeatureExtractor(actionformer_model)
+	# print(actionformer_feature_extractor)
+	# # Extract features without updating weights
+	#
+	# # Freeze ActionFormer model weights
+	# for param in actionformer_model.parameters():
+	# 	param.requires_grad = False
 
-	# Wrap the model with the feature extractor
-	actionformer_feature_extractor = ActionFormerFeatureExtractor(actionformer_model)
-	print(actionformer_feature_extractor)
-	# Extract features without updating weights
-
-	# Freeze ActionFormer model weights
-	for param in actionformer_model.parameters():
-		param.requires_grad = False
-
+	actionformer_feature_extractor = initialize_actionformer(config_file_path=args.config_path)
 
 	# create model directory
 	if not os.path.exists(args.model_path):
@@ -68,7 +68,6 @@ def main(args):
 	with open(args.annotation_path, 'rb') as f:
 		annotation = pickle.load(f)
 	print("annotations size:", len(annotation))
-	
 	# build data loader
 	data_loader = get_loader(annotation, args.image_dir, args.h_dir, args.openpose_dir, vocab, transform,
 		args.batch_size, shuffle=True, num_workers=args.num_workers, seq_length=args.seq_length)
@@ -78,7 +77,7 @@ def main(args):
 	vocab_size = upp_size
 	encoder = EncoderCNN(args.embed_size, actionformer_feature_extractor).to(device)
 
-	model_dir = os.path.abspath('./utils/trained_ckpt')
+	model_dir = os.path.abspath('./utils/trained_ckpt_actionformer')
 	decoder = DecoderRNN(args.embed_size,
 						 args.hidden_size,
 						 upp_size+1,
