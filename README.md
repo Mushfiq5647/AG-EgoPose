@@ -24,7 +24,7 @@ for your sample sequence.
 
 Then run the following command:
 
-`python sample.py --vocab_path <path/to/sample_vocab.pkl> --output <path/to/output_dir> --encoder_path <path/to/trained/encoder.pth> --decoder_path <path/to/trained/decoder.pth> --upp`
+`python sample.py --vocab_path vocab/vocab_py3.pkl --output ./outputs --encoder_path ./utils/trained_ckpt_you2me/encoder-20-61.ckpt --decoder_path ./utils/trained_ckpt_you2me/decoder-20-61.ckpt --upp`
 
 Change flag `--upp` to `--low` to test the lower body model.
 
@@ -46,7 +46,7 @@ Then run the following command:
 
 
 For testing:
-`python test.py --encoder_path ./utils/trained_ckpt/encoder-1-61.ckpt --decoder_path ./utils/trained_ckpt/decoder-1-61.ckpt --output_dir ./outputs --vocab_path ./vocab/vocab_py3.pkl --test_annotation_path ./vocab/test_annotation.pkl`
+`python test.py --encoder_path ./utils/trained_ckpt/encoder-20-61.ckpt --decoder_path ./utils/trained_ckpt/decoder-20-61.ckpt --output_dir ./outputs --vocab_path ./vocab/vocab_py3.pkl --test_annotation_path ./vocab/test_annotation.pkl`
 
 Change flag `--upp` to `--low` to train the lower body model.
 
