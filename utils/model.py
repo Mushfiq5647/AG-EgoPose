@@ -90,24 +90,26 @@ class DecoderRNN(nn.Module):
 
 	def sample(self, features, homography, openpose, states=None):
 		sampled_ids = []
-		embeddings = torch.zeros([1, 1, self.embed_size]).cuda().float()
+		embeddings = torch.zeros([1, 1, self.output_size]).cuda().float()
 		features = features.squeeze(0)
 
+
+		output_list = []
 		for i in range(features.shape[0]):
 			curr_feat = features[i].unsqueeze(0).unsqueeze(1)
 			curr_h = homography[i].unsqueeze(0).unsqueeze(1)
+			# print("Homography shape", curr_h.shape)
 			curr_op = openpose[i].unsqueeze(0).unsqueeze(1)
+			# print("Homography shape", curr_h.shape)
 			tensor = torch.cat((embeddings, curr_feat), 2)
 			tensor = torch.cat((tensor, curr_h.cuda()), 2)
-			tensor = torch.cat((tensor, curr_op.cuda()), 2)	
+			tensor = torch.cat((tensor, curr_op.cuda()), 2)
 			hiddens, states = self.lstm(tensor, states)
-			outputs = self.linear(hiddens.squeeze(1))
-			_, predicted = outputs.max(1)
-			sampled_ids.append(predicted)
-			embeddings = self.embed(predicted)
-			embeddings = embeddings.unsqueeze(1)
-		sampled_ids = torch.stack(sampled_ids, 1)
-		return sampled_ids
+			outputs = self.linear(hiddens[0])
+			output_list.append(outputs)
+			all_outputs = torch.cat(output_list, dim=0)  # Shape: [256, output_size]
+			# print("Output shape", outputs.shape)
+		return all_outputs
 
 
 
