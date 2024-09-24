@@ -35,6 +35,18 @@ def load_openpose(video_path, openpose_path, seq_length):
 	print("OpenPose Loaded")
 	return openpose
 
+def load_gt(video_path, gt_path, seq_length):
+	gt_pose = []
+	for i in range(seq_length):
+		file_path = os.path.join(gt_path, "p" + str(i + 1) + ".txt")
+		with open(file_path, 'r') as f:
+			egopose_gt = list(map(float, f.read().split()))
+		gt_pose.append(egopose_gt)
+	gt_pose = torch.Tensor(gt_pose)
+	print("Gt Loaded")
+	return gt_pose
+
+
 
 def load_homography(video_path, homography_path, seq_length):
 	homography = []
@@ -53,6 +65,7 @@ def load_homography(video_path, homography_path, seq_length):
 def load_video(video_path, seq_length, transform=None):
 	images = []
 	for i in range(seq_length):
+		path = os.path.join(video_path, "imxx" + str(i + 1) + ".jpg")
 		image = Image.open(os.path.join(video_path, "imxx" + str(i + 1) + ".jpg")).convert('RGB')
 		if transform is not None:
 			image = transform(image)
@@ -63,6 +76,8 @@ def load_video(video_path, seq_length, transform=None):
 	return images
 
 def plot_first_10_outputs(outputs):
+	with open('gt.txt', 'w') as f:
+		f.write(str(outputs[:10]))
 	# Iterate over the first 10 outputs
 	for i in range(10):
 		# Extract and reshape each output to [25, 3] for plotting
@@ -109,11 +124,10 @@ def main(args):
 	homography = load_homography(args.image_dir, args.h_dir, args.seq_length)
 	print("Homography shape", homography.shape)
 	openpose = load_openpose(args.image_dir, args.openpose_dir, args.seq_length)
+	ground_truth = load_gt(args.image_dir, args.gt_dir, args.seq_length)
 	print("Openpose shape", openpose.shape)
 	pose_outputs = decoder.sample(feature, homography, openpose)
 	print("Pose outputs shape", pose_outputs.shape)
-	with open('outputs.txt', 'w') as f:
-		f.write(str(pose_outputs))
 
 	# Example usage
 	# Assuming 'outputs' is already defined
@@ -134,7 +148,8 @@ if __name__ == '__main__':
 
 	parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect/patty34/synchronized/frames', help='directory for resized images')
 	parser.add_argument('--h_dir', type=str, default='you2me_ds_release_kinect/kinect/patty34/features/homography', help='directory for resized images')
-	parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect/patty34/features/openpose/output_json', help='directory for resized images')
+	parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect/patty34/features/openpose/output_json', help='directory for openpose')
+	parser.add_argument('--gt_dir', type=str, default='you2me_ds_release_kinect/kinect/patty34/synchronized/gt-egopose', help='directory for ground truth')
 
 	parser.add_argument('--embed_size', type=int , default=256, help='dimension of word embedding vectors')
 	parser.add_argument('--hidden_size', type=int , default=512, help='dimension of lstm hidden states')

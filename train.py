@@ -55,7 +55,7 @@ def main(args):
 	upp_size, low_size = vocab.get_shapes()
 	vocab_size = upp_size
 	encoder = EncoderCNN(args.embed_size).to(device)
-g
+
 	model_dir = os.path.abspath('./utils/trained_ckpt')
 	decoder = DecoderRNN(args.embed_size,
 						 args.hidden_size,
