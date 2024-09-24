@@ -6,6 +6,8 @@ from mpl_toolkits.mplot3d import Axes3D
 
 
 def draw_joints(joints, ax):
+    with open('outputs.txt', 'w') as f:
+        f.write(str(joints))
     # Spine
     ax.plot3D(joints[[0, 1], 0], joints[[0, 1], 2], joints[[0, 1], 1])  # SpineBase -> SpineMid
     ax.plot3D(joints[[1, 2], 0], joints[[1, 2], 2], joints[[1, 2], 1])  # SpineMid -> Neck
