@@ -146,10 +146,10 @@ if __name__ == '__main__':
 	parser.add_argument('--upp', action='store_true', help='set flag if training upper body model')
 	parser.add_argument('--low', action='store_true', help='set flag if training lower body model')
 
-	parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect/patty34/synchronized/frames', help='directory for resized images')
-	parser.add_argument('--h_dir', type=str, default='you2me_ds_release_kinect/kinect/patty34/features/homography', help='directory for resized images')
-	parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect/patty34/features/openpose/output_json', help='directory for openpose')
-	parser.add_argument('--gt_dir', type=str, default='you2me_ds_release_kinect/kinect/patty34/synchronized/gt-egopose', help='directory for ground truth')
+	parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect/sport56/synchronized/frames', help='directory for resized images')
+	parser.add_argument('--h_dir', type=str, default='you2me_ds_release_kinect/kinect/sport56/features/homography', help='directory for resized images')
+	parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect/sport56/features/openpose/output_json', help='directory for openpose')
+	parser.add_argument('--gt_dir', type=str, default='you2me_ds_release_kinect/kinect/sport56/synchronized/gt-egopose', help='directory for ground truth')
 
 	parser.add_argument('--embed_size', type=int , default=256, help='dimension of word embedding vectors')
 	parser.add_argument('--hidden_size', type=int , default=512, help='dimension of lstm hidden states')
