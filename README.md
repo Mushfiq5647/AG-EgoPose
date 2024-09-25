@@ -24,7 +24,7 @@ for your sample sequence.
 
 Then run the following command:
 
-`python sample.py --vocab_path ./vocab/vocab_py3.pkl --output ./outputs --encoder_path ./utils/trained_ckpt/encoder-3-61.ckpt --decoder_path ./utils/trained_ckpt/decoder-3-61.ckpt --upp --visualize`
+`python sample.py --vocab_path ./vocab/vocab_py3.pkl --output ./outputs --encoder_path ./utils/trained_ckpt_actionformer/encoder-20-61.ckpt --decoder_path ./utils/trained_ckpt_actionformer/decoder-20-61.ckpt --upp --visualize`
 
 Change flag `--upp` to `--low` to test the lower body model.
 

@@ -36,6 +36,17 @@ def load_openpose(video_path, openpose_path, seq_length):
 	print("OpenPose Loaded")
 	return openpose
 
+def load_gt(video_path, gt_path, seq_length):
+	gt_pose = []
+	for i in range(seq_length):
+		file_path = os.path.join(gt_path, "p" + str(i + 1) + ".txt")
+		with open(file_path, 'r') as f:
+			egopose_gt = list(map(float, f.read().split()))
+		gt_pose.append(egopose_gt)
+	gt_pose = torch.Tensor(gt_pose)
+	print("Gt Loaded")
+	return gt_pose
+
 
 def load_homography(video_path, homography_path, seq_length):
 	homography = []
@@ -112,10 +123,12 @@ def main(args):
 	print("Homography shape", homography.shape)
 	openpose = load_openpose(args.image_dir, args.openpose_dir, args.seq_length)
 	print("Openpose shape", openpose.shape)
+	ground_truth = load_gt(args.image_dir, args.gt_dir, args.seq_length)
+	print("Ground truth shape", ground_truth.shape)
 	pose_outputs = decoder.sample(feature, homography, openpose)
 	print("Pose outputs shape", pose_outputs.shape)
-	with open('outputs.txt', 'w') as f:
-		f.write(str(pose_outputs))
+	# with open('gt.txt', 'w') as f:
+	# 	f.write(str(ground_truth))
 
 	# Example usage
 	# Assuming 'outputs' is already defined
