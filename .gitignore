@@ -9,3 +9,7 @@ annotations.json
 sample_outputs.txt
 sample_poses.txt
 sample_targets.txt
+# Ignore Python cache files
+__pycache__/
+*.pyc
+
