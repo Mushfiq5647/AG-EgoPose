@@ -61,16 +61,11 @@ class EncoderCNN(nn.Module):
 					# print("Shape after final concatenation:", final_concatenated_features.shape)
 					return final_concatenated_features
 
-			# check_elements(head)
 			concat_stem_features = concat_features(stem_features)
-			# print("Shape of concatenated stem features:", concat_stem_features.shape)
 			compact_stem_features = conv_features(concat_stem_features)
-			# print("Shape of compact stem features", compact_stem_features.shape)
 
 			concat_branch_features = concat_features(branch_features)
-			# print("Shape of concatenated branch features:", concat_branch_features.shape)
 			compact_branch_features = conv_features(concat_branch_features)
-			# print("Shape of compact branch features", compact_branch_features.shape)
 
 
 
@@ -96,7 +91,7 @@ class DecoderRNN(nn.Module):
 		self.use_pose2 = use_pose2
 		self.embed_size = embed_size
 		self.output_size = output_size
-		self.lstm_full_input_size = output_size + sequence_length*3 +  (homog_size * num_homog) + pose2_size
+		self.lstm_full_input_size = output_size + sequence_length*3 + (homog_size * num_homog)
 		self.lstm_reduced_input_size = output_size + sequence_length*3
 		if use_homog and use_pose2:
 			self.lstm_input_size = self.lstm_full_input_size
@@ -124,7 +119,7 @@ class DecoderRNN(nn.Module):
 			print(type(homography))
 			homography = homography.to(device)
 			poses2 = poses2.to(device)
-			embeddings = torch.cat((embeddings, homography, poses2), dim=-1)
+			embeddings = torch.cat((embeddings, homography), dim=-1)
 		else:
 			embeddings = self.input_projection(embeddings)
 
@@ -133,8 +128,6 @@ class DecoderRNN(nn.Module):
 
 		# assert embeddings.size(-1) == self.lstm_input_size, \
 		# 	f"Input size mismatch: expected {self.lstm_input_size}, but got {embeddings.size(-1)}"
-
-
 		# Pack the padded sequence
 		packed = pack_padded_sequence(embeddings, lengths, batch_first=True)
 
