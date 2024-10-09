@@ -61,8 +61,8 @@ class PoseDataset(data.Dataset):
 			poses2.append(pose2)
 		images = torch.stack(images)
 		target_egoposes = torch.Tensor(gt_egoposes)
-		with open('sample_targets.txt', 'a') as f:
-			f.write(f'{target_egoposes}\n')
+		# with open('sample_targets.txt', 'a') as f:
+		# 	f.write(f'{target_egoposes}\n')
 		if homography is not None and all(h is not None for h in homography):
 			# print("All elements in homography are valid")
 			homography = [list(h) for h in homography]
@@ -145,6 +145,7 @@ def getPair(imroot, hroot, oproot, path, vocab, index, test_mode):
 	""" helper method to get the image corresponding to the pair """
 	if not test_mode:
 		if index <= 1:
+
 			h = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0] * 15
 		else:
 			file = open(hroot + "/" + path + "/features/homography/h" + str(index - 2) + ".txt")
