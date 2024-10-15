@@ -1,4 +1,7 @@
 actionformer/config/
+actionformer/epoch_014.pth.tar
+actionformer/epoch_015.pth.tar
+actionformer/epoch_035.pth.tar
 utils/trained_ckpt_actionformer
 utils/trained_ckpt_you2me
 utils/train_upp
