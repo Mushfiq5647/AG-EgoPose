@@ -24,31 +24,60 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 print("OS:", os.cpu_count())
 print("Working On:",device)
-import os
-
+# Number of joints and coordinates per joint
 num_joints = 25
 coords_per_joint = 3
 
-# Define connections between joints (based on the skeleton structure)
-connections = [
-    (0, 12), (0, 16), (0, 1),  # SpineBase to HipLeft, HipRight, SpineMid
-    (1, 20),  # SpineMid to SpineShoulder
-    (20, 2),  # SpineShoulder to Neck
-    (2, 3),  # Neck to Head
-    (20, 4), (4, 5), (5, 6), (6, 7), (6, 22), (7, 21),  # Left arm
-    (20, 8), (8, 9), (9, 10), (10, 11), (10, 24), (11, 23),  # Right arm
-    (12, 13), (13, 14), (14, 15),  # Left leg
-    (16, 17), (17, 18), (18, 19),  # Right leg
+# Define bidirectional connections for the central body part
+bidirectional_connections = [
+    (0, 1),  # SpineBase <-> SpineMid
+    (1, 20), # SpineMid <-> SpineShoulder
+    (20, 2), # SpineShoulder <-> Neck
+    (2, 3),  # Neck <-> Head
+    (0, 12), # SpineBase <-> HipLeft
+    (0, 16)  # SpineBase <-> HipRight
 ]
 
-# Create the edge_index
+# Define unidirectional connections for limbs and extended parts
+unidirectional_connections = [
+    # Left arm chain
+    (20, 4), (4, 5), (5, 6), (6, 7), (6, 22), (7, 21),
+    # Right arm chain
+    (20, 8), (8, 9), (9, 10), (10, 11), (10, 24), (11, 23),
+    # Left leg chain
+    (12, 13), (13, 14), (14, 15),
+    # Right leg chain
+    (16, 17), (17, 18), (18, 19)
+]
+
+# Initialize lists for edge indices
 edge_index = [[], []]
 
-# For each connection, append the corresponding indices for all 3D coordinates (x, y, z)
-for joint_a, joint_b in connections:
+# Add bidirectional edges (both directions for each pair)
+for joint_a, joint_b in bidirectional_connections:
     for j in range(coords_per_joint):
-        edge_index[0].append(joint_a * coords_per_joint + j)  # Source joint's coordinate index
-        edge_index[1].append(joint_b * coords_per_joint + j)  # Target joint's coordinate index
+        edge_index[0].append(joint_a * coords_per_joint + j)
+        edge_index[1].append(joint_b * coords_per_joint + j)
+        edge_index[0].append(joint_b * coords_per_joint + j)
+        edge_index[1].append(joint_a * coords_per_joint + j)
+
+# Add unidirectional edges (one direction for each pair)
+for joint_a, joint_b in unidirectional_connections:
+    for j in range(coords_per_joint):
+        edge_index[0].append(joint_a * coords_per_joint + j)
+        edge_index[1].append(joint_b * coords_per_joint + j)
+
+# Optionally, add self-loops for each joint
+for joint in range(num_joints):
+    for j in range(coords_per_joint):
+        edge_index[0].append(joint * coords_per_joint + j)
+        edge_index[1].append(joint * coords_per_joint + j)
+
+print("Edge index:", edge_index)
+# Convert to tensor
+edge_index = torch.tensor(edge_index, dtype=torch.long)
+
+
 
 # Convert to tensor
 edge_index = torch.tensor(edge_index, dtype=torch.long)
@@ -126,10 +155,10 @@ def main(args):
 			# Forward pass
 			# with autocast():
 			features = encoder(images)
-			outputs = decoder(features, gt_egoposes, lengths, homography, poses2)
+			outputs = decoder(features, lengths, homography, poses2)
 			# with open('sample_outputs.txt', 'a') as f:
 			# 	f.write(f'{outputs}\n')
-			outputs = outputs.view(-1, 75)
+			# outputs = outputs.view(-1, 75)
 			loss = criterion(outputs, targets)
 			if torch.isnan(loss):
 				print(f"NaN detected! Epoch: {epoch}, Iteration: {i}")

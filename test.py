@@ -121,7 +121,7 @@ def main(args):
                 targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
                 # Forward pass
                 features = encoder(images)
-                outputs = decoder(features, gt_egoposes, lengths, homography, poses2)
+                outputs = decoder(features, lengths, homography, poses2)
                 print("Outputs:", outputs.shape)
                 print("Targets:", targets.shape)
                 outputs = outputs.view(-1, 75)
