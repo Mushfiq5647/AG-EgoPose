@@ -1,5 +1,9 @@
-utils/trained_ckpt_you2me
+actionformer/config/
+actionformer/epoch_014.pth.tar
+actionformer/epoch_015.pth.tar
+actionformer/epoch_035.pth.tar
 utils/trained_ckpt_actionformer
+utils/trained_ckpt_you2me
 utils/train_upp
 you2me_ds_release_cmu (1)/
 you2me_ds_release_kinect/
@@ -8,3 +12,7 @@ annotations.json
 sample_outputs.txt
 sample_poses.txt
 sample_targets.txt
+# Ignore Python cache files
+__pycache__/
+*.pyc
+
