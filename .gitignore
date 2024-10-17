@@ -14,6 +14,7 @@ sample_outputs.txt
 sample_poses.txt
 sample_targets.txt
 # Ignore Python cache files
+utils/__pycache__/
 __pycache__/
 *.pyc
 

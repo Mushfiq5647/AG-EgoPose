@@ -62,7 +62,7 @@ def main(args):
     print("Batch size", len(data_loader.dataset))
     # Load models
     encoder = EncoderCNN(args.embed_size).to(device)
-    decoder = DecoderRNN(args.embed_size, args.hidden_size, vocab_size+1,
+    decoder = DecoderRNN(args.embed_size, args.hidden_size,
                          args.seq_length,
                          args.num_layers).to(device)
 
@@ -82,7 +82,7 @@ def main(args):
                 targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
                 # Forward pass
                 features = encoder(images)
-                outputs = decoder(features, gt_egoposes, lengths, homography, poses2)
+                outputs = decoder(features, lengths, homography, poses2)
 
                 # Calculate MPJPE
                 mpjpe = mean_per_joint_position_error(outputs, targets)
