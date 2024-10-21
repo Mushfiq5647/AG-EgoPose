@@ -1,1 +1,0 @@
-<_io.TextIOWrapper name='you2me_ds_release_kinect/kinect/patty34/features/homography\\h254.txt' mode='r' encoding='cp1252'>
