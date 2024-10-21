@@ -7,5 +7,6 @@ you2me_ds_release_cmu (1)/
 you2me_ds_release_kinect/
 # Ignore Python cache files
 __pycache__/
+.idea/
 *.pyc
 
