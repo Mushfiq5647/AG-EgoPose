@@ -76,13 +76,6 @@ for joint in range(num_joints):
 print("Edge index:", edge_index)
 # Convert to tensor
 edge_index = torch.tensor(edge_index, dtype=torch.long)
-
-
-
-# Convert to tensor
-edge_index = torch.tensor(edge_index, dtype=torch.long)
-
-
 def main(args):
 	actionformer_feature_extractor = initialize_actionformer(config_file_path=args.config_path)
 
@@ -187,9 +180,6 @@ if __name__== '__main__':
 	parser.add_argument('--model_path', type=str, required=True, help='path for saving trained models')
 	parser.add_argument('--vocab_path', type=str, required=True, help='path for vocabulary wrapper')
 	parser.add_argument('--annotation_path', type=str, required=True, help='path for annotation wrapper')
-
-	parser.add_argument('--upp', action='store_true', help='set flag if training upper body model')
-	parser.add_argument('--low', action='store_true', help='set flag if training lower body model')
 
 	parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for resized images')
 	parser.add_argument('--h_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for resized images')
