@@ -7,12 +7,40 @@ import pickle
 from utils.data_loader import get_loader
 from utils.build_vocab import Vocabulary
 from utils.build_test_annotation import TestAnnotation
-from utils.model import EncoderCNN, DecoderRNN
+from utils.model import EncoderCNN, DecoderRNN,TemporalGCN
 from torchvision import transforms
 from torch.nn.utils.rnn import pack_padded_sequence
+from action_recognition import initialize_actionformer
 
 # Device configuration
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+num_joints = 25
+coords_per_joint = 3
+
+# Define connections between joints (based on the skeleton structure)
+connections = [
+    (0, 12), (0, 16), (0, 1),  # SpineBase to HipLeft, HipRight, SpineMid
+    (1, 20),  # SpineMid to SpineShoulder
+    (20, 2),  # SpineShoulder to Neck
+    (2, 3),  # Neck to Head
+    (20, 4), (4, 5), (5, 6), (6, 7), (6, 22), (7, 21),  # Left arm
+    (20, 8), (8, 9), (9, 10), (10, 11), (10, 24), (11, 23),  # Right arm
+    (12, 13), (13, 14), (14, 15),  # Left leg
+    (16, 17), (17, 18), (18, 19),  # Right leg
+]
+
+# Create the edge_index
+edge_index = [[], []]
+
+# For each connection, append the corresponding indices for all 3D coordinates (x, y, z)
+for joint_a, joint_b in connections:
+    for j in range(coords_per_joint):
+        edge_index[0].append(joint_a * coords_per_joint + j)  # Source joint's coordinate index
+        edge_index[1].append(joint_b * coords_per_joint + j)  # Target joint's coordinate index
+
+# Convert to tensor
+edge_index = torch.tensor(edge_index, dtype=torch.long)
 
 
 def mean_per_joint_position_error(predicted, target):
@@ -44,6 +72,7 @@ def main(args):
         os.makedirs(args.output_dir)
 
     output_file = os.path.join(args.output_dir, "mpjpe_results.txt")
+    actionformer_feature_extractor = initialize_actionformer(config_file_path=args.config_path)
 
     # Load vocab wrapper
     with open(args.vocab_path, 'rb') as f:
@@ -61,10 +90,20 @@ def main(args):
 
     print("Batch size", len(data_loader.dataset))
     # Load models
-    encoder = EncoderCNN(args.embed_size).to(device)
-    decoder = DecoderRNN(args.embed_size, args.hidden_size,
+    encoder = EncoderCNN(args.embed_size, actionformer_feature_extractor).to(device)
+
+    temporal_gcn = TemporalGCN(
+        args.hidden_size,
+        args.seq_length,
+        edge_index,
+        output_dim=75,
+        kernel_size=7).to(device)
+
+    decoder = DecoderRNN(args.embed_size,
+                         args.hidden_size,
                          args.seq_length,
-                         args.num_layers).to(device)
+                         args.num_layers,
+                         temporal_gcn).to(device)
 
     # Load trained models
     encoder.load_state_dict(torch.load(args.encoder_path))
@@ -83,6 +122,9 @@ def main(args):
                 # Forward pass
                 features = encoder(images)
                 outputs = decoder(features, lengths, homography, poses2)
+                print("Outputs:", outputs.shape)
+                print("Targets:", targets.shape)
+                outputs = outputs.view(-1, 75)
 
                 # Calculate MPJPE
                 mpjpe = mean_per_joint_position_error(outputs, targets)
@@ -99,6 +141,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # Model and data paths
+    parser.add_argument('--config_path', type=str, default='actionformer/config/anet_tsp.yaml', help='path to the config file')
     parser.add_argument('--encoder_path', type=str, required=True, help='path for trained encoder')
     parser.add_argument('--decoder_path', type=str, required=True, help='path for trained decoder')
     parser.add_argument('--output_dir', type=str, required=True, help='path for outputs')

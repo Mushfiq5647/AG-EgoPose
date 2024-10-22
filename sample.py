@@ -7,6 +7,7 @@ import pickle
 import time
 import os
 import json
+from action_recognition import initialize_actionformer
 import matplotlib.pyplot as plt
 
 from torchvision import transforms
@@ -47,7 +48,6 @@ def load_gt(video_path, gt_path, seq_length):
 	return gt_pose
 
 
-
 def load_homography(video_path, homography_path, seq_length):
 	homography = []
 	h = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0] * 15;
@@ -65,7 +65,6 @@ def load_homography(video_path, homography_path, seq_length):
 def load_video(video_path, seq_length, transform=None):
 	images = []
 	for i in range(seq_length):
-		path = os.path.join(video_path, "imxx" + str(i + 1) + ".jpg")
 		image = Image.open(os.path.join(video_path, "imxx" + str(i + 1) + ".jpg")).convert('RGB')
 		if transform is not None:
 			image = transform(image)
@@ -76,13 +75,11 @@ def load_video(video_path, seq_length, transform=None):
 	return images
 
 def plot_first_10_outputs(outputs):
-	with open('gt.txt', 'w') as f:
-		f.write(str(outputs[:10]))
 	# Iterate over the first 10 outputs
 	for i in range(10):
 		# Extract and reshape each output to [25, 3] for plotting
-		# joints = outputs[i].view(25, 3).cpu().detach().numpy()
-		joints = outputs[i].detach().cpu().numpy().reshape(-1, 3)  # Reshape into 25 joints with 3 coordinates
+		joints = outputs[i].view(25, 3).cpu().detach().numpy()
+
 		# Use the provided visualization function
 		show_upp(joints)
 
@@ -90,6 +87,7 @@ def plot_first_10_outputs(outputs):
 		plt.pause(1)
 
 def main(args):
+	actionformer_feature_extractor = initialize_actionformer(config_file_path=args.config_path)
 	transform = transforms.Compose([
 		transforms.Resize(args.crop_size),
 		transforms.ToTensor(),
@@ -102,7 +100,7 @@ def main(args):
 	upp_size, low_size = vocab.get_shapes()
 	vocab_size = upp_size
 	start = time.time()
-	encoder = EncoderCNN(args.embed_size).eval()
+	encoder = EncoderCNN(args.embed_size, actionformer_feature_extractor).eval()
 
 	decoder = DecoderRNN(args.embed_size,
 						 args.hidden_size,
@@ -124,10 +122,13 @@ def main(args):
 	homography = load_homography(args.image_dir, args.h_dir, args.seq_length)
 	print("Homography shape", homography.shape)
 	openpose = load_openpose(args.image_dir, args.openpose_dir, args.seq_length)
-	ground_truth = load_gt(args.image_dir, args.gt_dir, args.seq_length)
 	print("Openpose shape", openpose.shape)
+	ground_truth = load_gt(args.image_dir, args.gt_dir, args.seq_length)
+	print("Ground truth shape", ground_truth.shape)
 	pose_outputs = decoder.sample(feature, homography, openpose)
 	print("Pose outputs shape", pose_outputs.shape)
+	# with open('gt.txt', 'w') as f:
+	# 	f.write(str(ground_truth))
 
 	# Example usage
 	# Assuming 'outputs' is already defined
@@ -147,9 +148,9 @@ if __name__ == '__main__':
 	parser.add_argument('--low', action='store_true', help='set flag if training lower body model')
 
 	parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect/sport56/synchronized/frames', help='directory for resized images')
+	parser.add_argument('--gt_dir', type=str, default='you2me_ds_release_kinect/kinect/sport56/synchronized/gt-egopose', help='directory for gt images')
 	parser.add_argument('--h_dir', type=str, default='you2me_ds_release_kinect/kinect/sport56/features/homography', help='directory for resized images')
-	parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect/sport56/features/openpose/output_json', help='directory for openpose')
-	parser.add_argument('--gt_dir', type=str, default='you2me_ds_release_kinect/kinect/sport56/synchronized/gt-egopose', help='directory for ground truth')
+	parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect/sport56/features/openpose/output_json', help='directory for resized images')
 
 	parser.add_argument('--embed_size', type=int , default=256, help='dimension of word embedding vectors')
 	parser.add_argument('--hidden_size', type=int , default=512, help='dimension of lstm hidden states')
@@ -161,4 +162,8 @@ if __name__ == '__main__':
 
 	args = parser.parse_args()
 	main(args)
+
+
+
+
 

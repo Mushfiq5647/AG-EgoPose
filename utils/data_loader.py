@@ -2,8 +2,13 @@
 import json
 import os
 import torch
+import torchvision.transforms as transforms
 import torch.utils.data as data
+import random
+import json
 from PIL import Image
+import os
+import argparse
 
 
 class PoseDataset(data.Dataset):
@@ -18,6 +23,7 @@ class PoseDataset(data.Dataset):
 		self.seq_length = seq_length
 		self.test_mode = test_mode
 
+
 	def __getitem__(self, index):
 		imroot = self.imroot
 		hroot = self.hroot
@@ -28,11 +34,9 @@ class PoseDataset(data.Dataset):
 		path, end = annotation.anns[index]
 		images = []
 		gt_egoposes = []
-		poses = []
 		poses2 = []
 		homography = []
 		for i in range(end-self.seq_length, end):
-			# print("Image Count", i, end)
 			image, gt_egopose, h, pose2 = getPair(imroot, hroot, oproot, path, vocab, i, test_mode)
 			if self.transform is not None:
 				image = self.transform(image)
@@ -42,8 +46,6 @@ class PoseDataset(data.Dataset):
 			poses2.append(pose2)
 		images = torch.stack(images)
 		target_egoposes = torch.Tensor(gt_egoposes)
-		with open('sample_targets.txt', 'a') as f:
-			f.write(f'{target_egoposes}\n')
 		if homography is not None and all(h is not None for h in homography):
 			homography = [list(h) for h in homography]
 			homography = torch.Tensor(homography)
@@ -60,6 +62,7 @@ def collate_fn(data):
 	images = torch.stack(images, 0)
 	lengths = [len(pose) for pose in target_egoposes]
 	max_length = max(lengths)
+	# Now a 3D tensor to hold [batch_size, sequence_length, 2]
 	targets = torch.zeros(len(target_egoposes), max_length, 75)
 	for i, pose in enumerate(target_egoposes):
 		end = lengths[i]
@@ -67,12 +70,14 @@ def collate_fn(data):
 	if isinstance(homography[0], torch.Tensor) and isinstance(poses2[0], torch.Tensor):
 		homography = torch.stack(homography, 0)
 		poses2 = torch.stack(poses2, 0)
+
 	return images, targets, homography, poses2, lengths
 
 def getPair(imroot, hroot, oproot, path, vocab, index, test_mode):
 	""" helper method to get the image corresponding to the pair """
 	if not test_mode:
 		if index <= 1:
+
 			h = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0] * 15
 		else:
 			file = open(hroot + "/" + path + "/features/homography/h" + str(index - 2) + ".txt")
@@ -85,10 +90,11 @@ def getPair(imroot, hroot, oproot, path, vocab, index, test_mode):
 				# No people detected, handle missing data
 				pose2 = [0] * 75
 			else:
+				# Extract the keypoints for the first person in the 'people' array
 				pose_keypoints = js['people'][0].get('pose_keypoints_2d', [])
 
 				if len(pose_keypoints) == 0:
-					# If no keypoints are found, set to a default value
+					# If no keypoints are found, set to a default 75 zeros value
 					pose2 = [0] * 75
 				else:
 					pose2 = pose_keypoints
@@ -99,7 +105,6 @@ def getPair(imroot, hroot, oproot, path, vocab, index, test_mode):
 	egopose_file = imroot + "/" + path + "/synchronized/gt-egopose/p" + str(index) + ".txt"
 	with open(egopose_file, 'r') as f:
 		egopose_gt = list(map(float, f.read().split()))
-
 	path = path + "/synchronized/frames/imxx" + str(index) + ".jpg"
 	image = Image.open(os.path.join(imroot, path)).convert('RGB')
 	return image, egopose_gt, h, pose2
