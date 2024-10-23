@@ -8,12 +8,11 @@ from PIL import Image
 
 class PoseDataset(data.Dataset):
 	""" Pose custom dataset compatible with torch.utils.data.DataLoader. """
-	def __init__(self, annotation, imroot, hroot, oproot, vocab, seq_length, test_mode, transform=None):
+	def __init__(self, annotation, imroot, hroot, oproot, seq_length, test_mode, transform=None):
 		self.annotation = annotation
 		self.imroot = imroot
 		self.hroot = hroot
 		self.oproot = oproot
-		self.vocab = vocab
 		self.transform = transform
 		self.seq_length = seq_length
 		self.test_mode = test_mode
@@ -22,7 +21,6 @@ class PoseDataset(data.Dataset):
 		imroot = self.imroot
 		hroot = self.hroot
 		oproot = self.oproot
-		vocab = self.vocab
 		annotation = self.annotation
 		test_mode = self.test_mode
 		path, end = annotation.anns[index]
@@ -33,7 +31,7 @@ class PoseDataset(data.Dataset):
 		homography = []
 		for i in range(end-self.seq_length, end):
 			# print("Image Count", i, end)
-			image, gt_egopose, h, pose2 = getPair(imroot, hroot, oproot, path, vocab, i, test_mode)
+			image, gt_egopose, h, pose2 = getPair(imroot, hroot, oproot, path, i, test_mode)
 			if self.transform is not None:
 				image = self.transform(image)
 			images.append(image)
@@ -69,7 +67,7 @@ def collate_fn(data):
 		poses2 = torch.stack(poses2, 0)
 	return images, targets, homography, poses2, lengths
 
-def getPair(imroot, hroot, oproot, path, vocab, index, test_mode):
+def getPair(imroot, hroot, oproot, path, index, test_mode):
 	""" helper method to get the image corresponding to the pair """
 	if not test_mode:
 		if index <= 1:
@@ -104,9 +102,9 @@ def getPair(imroot, hroot, oproot, path, vocab, index, test_mode):
 	image = Image.open(os.path.join(imroot, path)).convert('RGB')
 	return image, egopose_gt, h, pose2
 
-def get_loader(annotation, imroot, hroot, oproot, vocab, transform, batch_size, shuffle, num_workers, seq_length, test_mode = False):
+def get_loader(annotation, imroot, hroot, oproot, transform, batch_size, shuffle, num_workers, seq_length, test_mode = False):
 	""" Returns torch.utils.data.DataLoader for custom pose dataset. """
-	ds = PoseDataset(annotation=annotation, imroot=imroot, hroot=hroot, oproot=oproot, vocab=vocab,
+	ds = PoseDataset(annotation=annotation, imroot=imroot, hroot=hroot, oproot=oproot,
 		seq_length=seq_length, transform=transform, test_mode= test_mode)
 	data_loader = torch.utils.data.DataLoader(dataset=ds, batch_size=batch_size,
 		shuffle=shuffle, num_workers=num_workers, collate_fn=collate_fn, pin_memory=True)
