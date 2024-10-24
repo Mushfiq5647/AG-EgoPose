@@ -85,7 +85,7 @@ def main(args):
     vocab_size = upp_size
 
     # Build data loader
-    data_loader = get_loader(annotation, args.image_dir, args.h_dir, args.openpose_dir, vocab, transform,
+    data_loader = get_loader(annotation, args.image_dir, args.h_dir, args.openpose_dir, transform,
                              args.batch_size, shuffle=False, num_workers=args.num_workers, seq_length=args.seq_length)
 
     print("Batch size", len(data_loader.dataset))

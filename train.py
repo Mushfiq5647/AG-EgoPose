@@ -15,6 +15,8 @@ from action_recognition import ActionFormerFeatureExtractor
 from action_recognition import initialize_actionformer
 from utils.model import EncoderCNN, DecoderRNN, TemporalGCN
 from torch.nn.utils.rnn import pack_padded_sequence
+from utils.build_annotation import Annotation
+from utils.build_validation_annotation import ValidationAnnotation
 from torchvision import transforms
 from torch.cuda.amp import GradScaler, autocast
 torch.set_printoptions(threshold=torch.inf)
@@ -82,6 +84,42 @@ edge_index = torch.tensor(edge_index, dtype=torch.long)
 # Convert to tensor
 edge_index = torch.tensor(edge_index, dtype=torch.long)
 
+# Evaluation function
+
+def mean_per_joint_position_error(predicted, target):
+    # Reshape the data from (batch_size, sequence_length, 75) to (batch_size, sequence_length, 25, 3)
+    print(f"Predicted shape: {predicted.shape}")
+    print(f"Target shape: {target.shape}")
+
+    predicted = predicted.view(predicted.size(0), 25, 3)
+    target = target.view(target.size(0), 25, 3)
+
+    # Compute the Euclidean distance (L2 norm) between predicted and target for each joint
+    error = torch.norm(predicted - target, dim=-1)  # L2 norm along the last dimension (x, y, z)
+
+    # Compute the mean over all joints, frames, and batches
+    mpjpe = torch.mean(error)  # Average over all joints and frames
+    return mpjpe.item()
+def evaluate(encoder, decoder, data_loader, criterion):
+    encoder.eval()
+    decoder.eval()
+    total_loss = 0
+    total_mpjpe = 0
+    with torch.no_grad():
+        for images, gt_egoposes, homography, poses2, lengths in data_loader:
+            images = images.to(device)
+            gt_egoposes = gt_egoposes.to(device)
+
+            features = encoder(images)
+            outputs = decoder(features, lengths, homography, poses2)
+
+            targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
+            mpjpe = mean_per_joint_position_error(outputs, targets)
+            total_mpjpe += mpjpe
+        avg_mpjpe = total_mpjpe / len(data_loader)
+        print(f'Average MPJPE: {avg_mpjpe:.4f}')
+
+    return avg_mpjpe
 
 def main(args):
 	actionformer_feature_extractor = initialize_actionformer(config_file_path=args.config_path)
@@ -96,35 +134,33 @@ def main(args):
 		transforms.Normalize((0.485, 0.456, 0.406),
 			(0.229, 0.224, 0.225))])
 
-	# load vocab wrapper
-	with open(args.vocab_path, 'rb') as f:
-		vocab = pickle.load(f)
-	print("cluster sizes: ", vocab.get_shapes())
+    with open(args.annotation_path, 'rb') as f:
+        annotation = pickle.load(f)
 
-	with open(args.annotation_path, 'rb') as f:
-		annotation = pickle.load(f)
-	print("annotations size:", len(annotation))
-	# build data loader
-	data_loader = get_loader(annotation, args.image_dir, args.h_dir, args.openpose_dir, vocab, transform,
-		args.batch_size, shuffle=True, num_workers=args.num_workers, seq_length=args.seq_length)
-	print("Data Loading complete", len(data_loader))
-	print("Total dataset", len(data_loader.dataset))
-	upp_size, low_size = vocab.get_shapes()
-	vocab_size = upp_size
-	encoder = EncoderCNN(args.embed_size, actionformer_feature_extractor).to(device)
+    with open(args.validation_annotation_path, 'rb') as f:
+        validation_annotation = pickle.load(f)
+    # build data loader
+    data_loader = get_loader(annotation, args.image_dir, args.h_dir, args.openpose_dir, transform,
+                             args.batch_size, shuffle=True, num_workers=args.num_workers, seq_length=args.seq_length)
 
-	model_dir = os.path.abspath('./utils/trained_ckpt_actionformer')
-	temporal_gcn = TemporalGCN(
+    val_loader = get_loader(validation_annotation, args.image_dir, args.h_dir, args.openpose_dir, transform,
+                             args.batch_size, shuffle=False, num_workers=args.num_workers, seq_length=args.seq_length)
+
+    print("Data Loading complete", len(data_loader))
+    print("Total dataset", len(data_loader.dataset))
+    print("Total Validation dataset", len(val_loader.dataset))
+    encoder = EncoderCNN(args.embed_size).to(device)
+    temporal_gcn = TemporalGCN(
 						 args.hidden_size,
 						 args.seq_length,
 						 edge_index,
 						 output_dim=75,
 						 kernel_size=7).to(device)
-	decoder = DecoderRNN(args.embed_size,
-						 args.hidden_size,
-						 args.seq_length,
-						 args.num_layers,
-						 temporal_gcn).to(device)
+decoder = DecoderRNN(args.embed_size,
+                     args.hidden_size,
+                     args.seq_length,
+                     args.num_layers,
+                     temporal_gcn).to(device)
 
 
 	# loss and optimizer
@@ -173,43 +209,95 @@ def main(args):
 			if i % args.log_step == 0:
 				print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Perplexity: {:5.4f}'
 					  .format(epoch, args.num_epochs, i, total_step, loss.item(), np.exp(loss.item())))
+    # loss and optimizer
+    criterion = nn.MSELoss()
+    params = list(decoder.parameters()) + list(encoder.linear.parameters()) + list(encoder.bn.parameters())
+    optimizer = torch.optim.Adam(params, lr=args.learning_rate)
 
-			if ((i + 1) % args.save_step == 0) or (i == total_step - 1):
-				torch.save(decoder.state_dict(),
-						   os.path.join(model_dir, 'decoder-{}-{}.ckpt'.format(epoch + 1, i + 1)))
-				torch.save(encoder.state_dict(),
-						   os.path.join(model_dir, 'encoder-{}-{}.ckpt'.format(epoch + 1, i + 1)))
+    best_val_loss = float('inf')
+    model_dir = os.path.abspath('./utils/trained_ckpt_you2me')
+
+    # File to store evaluation results
+    eval_results_file = os.path.join('best_model_evaluation.txt')
+    with open(eval_results_file, 'w') as f:
+        f.write("Epoch\tValidation Loss\n")
+    # scaler = GradScaler()
+    # train the models
+    total_step = len(data_loader)
+    # print ("total iter", total_step)
+    for epoch in range(args.num_epochs):
+        print("Printing epoch:", epoch)
+        encoder.train()
+        decoder.train()
+        for i, (images, gt_egoposes, homography, poses2, lengths) in enumerate(data_loader):
+            print("Printing iteration number:", i)
+            images = images.to(device)
+            gt_egoposes = gt_egoposes.to(device)
+            # Squeeze the targets to make them 1D
+            targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
+            features = encoder(images)
+            outputs = decoder(features, lengths, homography, poses2)
+            loss = criterion(outputs, targets)
+            if torch.isnan(loss):
+                print(f"NaN detected! Epoch: {epoch}, Iteration: {i}")
+                break
+            # Backward and optimize with mixed precision
+            decoder.zero_grad()
+            encoder.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(decoder.parameters(), args.clip_value)
+            torch.nn.utils.clip_grad_norm_(encoder.parameters(), args.clip_value)
+            optimizer.step()
+            if i % args.log_step == 0:
+                print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Perplexity: {:5.4f}'
+                      .format(epoch, args.num_epochs, i, total_step, loss.item(), np.exp(loss.item())))
+
+        val_mpjpe = evaluate(encoder, decoder, val_loader, criterion)
+        print(f'Epoch [{epoch + 1}] Validation Loss: {val_mpjpe:.4f}')
+
+        # Save the model only if validation loss improves
+        if val_mpjpe < best_val_loss:
+            print(f"Validation loss improved from {best_val_loss:.4f} to {val_mpjpe:.4f}, saving model...")
+            best_val_loss = val_mpjpe
+            torch.save(decoder.state_dict(), os.path.join(model_dir, 'decoder-{}-{}.ckpt'.format(epoch + 1, i + 1)))
+            torch.save(encoder.state_dict(), os.path.join(model_dir, 'encoder-{}-{}.ckpt'.format(epoch + 1, i + 1)))
+
+            # Log the best validation loss
+            with open(eval_results_file, 'a') as f:
+                f.write(f'{epoch + 1}\t{val_mpjpe:.4f}\n')
 
 
-if __name__== '__main__':
-	parser = argparse.ArgumentParser()
-	parser.add_argument('--config_path', type=str, default='actionformer/config/anet_tsp.yaml', help='path to the config file')
-	parser.add_argument('--model_path', type=str, required=True, help='path for saving trained models')
-	parser.add_argument('--vocab_path', type=str, required=True, help='path for vocabulary wrapper')
-	parser.add_argument('--annotation_path', type=str, required=True, help='path for annotation wrapper')
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model_path', type=str, required=True, help='path for saving trained models')
+    parser.add_argument('--annotation_path', type=str, required=True, help='path for annotation wrapper')
+    parser.add_argument('--validation_annotation_path', type=str, required=True, help='path for validation annotation wrapper')
 
-	parser.add_argument('--upp', action='store_true', help='set flag if training upper body model')
-	parser.add_argument('--low', action='store_true', help='set flag if training lower body model')
+    parser.add_argument('--upp', action='store_true', help='set flag if training upper body model')
+    parser.add_argument('--low', action='store_true', help='set flag if training lower body model')
 
-	parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for resized images')
-	parser.add_argument('--h_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for resized images')
-	parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for resized images')
+    parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect',
+                        help='directory for resized images')
+    parser.add_argument('--h_dir', type=str, default='you2me_ds_release_kinect/kinect',
+                        help='directory for resized images')
+    parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect',
+                        help='directory for resized images')
 
-	parser.add_argument('--embed_size', type=int , default=256, help='dimension of word embedding vectors')
-	parser.add_argument('--hidden_size', type=int, default=512, help='dimension of lstm hidden states')
-	parser.add_argument('--num_layers', type=int, default=2, help='number of layers in lstm')
-	parser.add_argument('--learning_rate', type=float, default=0.0005)
-	parser.add_argument('--clip_value', type=float, default=1.0)
-	parser.add_argument('--seq_length', type=int, default=256, help='length of the pose/video sequences')
-	parser.add_argument('--crop_size', type=int, default=224, help='size for randomly cropping images')
+    parser.add_argument('--embed_size', type=int, default=256, help='dimension of word embedding vectors')
+    parser.add_argument('--hidden_size', type=int, default=512, help='dimension of lstm hidden states')
+    parser.add_argument('--num_layers', type=int, default=2, help='number of layers in lstm')
+    parser.add_argument('--learning_rate', type=float, default=0.0005)
+    parser.add_argument('--clip_value', type=float, default=1.0)
+    parser.add_argument('--seq_length', type=int, default=256, help='length of the pose/video sequences')
+    parser.add_argument('--crop_size', type=int, default=224, help='size for randomly cropping images')
 
-	parser.add_argument('--num_epochs', type=int, default=20)
-	parser.add_argument('--batch_size', type=int, default=16)
-	parser.add_argument('--num_workers', type=int, default=0)
-	
-	parser.add_argument('--log_step', type=int , default=10, help='step size for prining log info')
-	parser.add_argument('--save_step', type=int , default=5, help='step size for saving trained models')
-	
-	args = parser.parse_args()
-	print(args)
-	main(args)
+    parser.add_argument('--num_epochs', type=int, default=20)
+    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--num_workers', type=int, default=0)
+
+    parser.add_argument('--log_step', type=int, default=10, help='step size for prining log info')
+    parser.add_argument('--save_step', type=int, default=5, help='step size for saving trained models')
+
+    args = parser.parse_args()
+    print(args)
+    main(args)
