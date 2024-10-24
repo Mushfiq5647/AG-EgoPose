@@ -21,7 +21,8 @@ class Annotation(object):
 
 def build_annotation():
 	annotation = Annotation()
-	categories = {"patty26":2304,
+	categories = {"patty2":1799,
+				  "patty26":2304,
 				  "patty27":934,
 				  "patty28":712,
 				  "patty30":2063,

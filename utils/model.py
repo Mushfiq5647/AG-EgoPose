@@ -13,21 +13,10 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 class TemporalGCN(nn.Module):
 	def __init__(self, hidden_dim, sequence_length, edge_index, output_dim=75, kernel_size=9, num_homog=15, homog_size=9):
 		super(TemporalGCN, self).__init__()
-
-		# GCN Layers (for spatial dependencies)
 		self.input_size = sequence_length*2 + (homog_size * num_homog)
+		self.edge_index = edge_index
 		self.gcn1 = GCNConv(self.input_size, hidden_dim)
 		self.gcn2 = GCNConv(hidden_dim, hidden_dim)
-
-		# Temporal Convolution (for temporal dependencies)
-		# self.temporal_conv = nn.Conv1d(in_channels=hidden_dim,
-		# 							   out_channels=hidden_dim,
-		# 							   kernel_size=kernel_size,
-		# 							   padding=kernel_size // 2)  # Maintain the sequence length
-		#
-		# Linear layer to output 75 joint coordinates
-		# self.linear = nn.Linear(hidden_dim, output_dim)
-		self.edge_index = edge_index
 
 	def forward(self, combined_features):
 		# Step 1: Apply GCN Layer 1 for spatial learning (spatial message passing)
@@ -35,17 +24,11 @@ class TemporalGCN(nn.Module):
 		edge_index = self.edge_index.to(device)
 		x = self.gcn1(combined_features, edge_index)
 		x = torch.relu(x)
-		#
-		# # Reshape for temporal convolution (change from [batch_size * sequence_length, num_joints, hidden_dim]
-		# batch_size_seq_len, num_joints, hidden_dim = x.shape
-		# x_view = x.view(-1, num_joints, hidden_dim)
-		# x = x.permute(0, 2, 1)
-		# x = self.temporal_conv(x)  # Apply 1D conv along the temporal axis
-		# x = x.permute(0, 2, 1)  # Shape back to [batch_size * sequence_length, num_joints, hidden_dim]
-
 		x = self.gcn2(x, edge_index)
 		x = torch.relu(x)
 		return x
+
+
 class EncoderCNN(nn.Module):
 	def __init__(self, embed_size, actionformer_model):
 		super(EncoderCNN, self).__init__()
@@ -95,6 +78,7 @@ class EncoderCNN(nn.Module):
 
 			concat_branch_features = concat_features(branch_features)
 			compact_branch_features = conv_features(concat_branch_features)
+			print("Branch layer shape", compact_branch_features.shape)
 
 		images = images.transpose(0, 1)
 		for batch in images:
@@ -138,8 +122,6 @@ class DecoderRNN(nn.Module):
 			embeddings = torch.cat((features, homography), dim=-1)
 		gcn_outputs = self.temporal_gcn(embeddings)
 		packed = pack_padded_sequence(gcn_outputs, lengths, batch_first=True)
-
-
 		hiddens, _ = self.lstm(packed)
 		final_outputs = self.linear(hiddens[0])
 		print("Output shape", final_outputs.shape)

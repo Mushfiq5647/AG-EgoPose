@@ -18,10 +18,11 @@ class ValidationAnnotation(object):
 
 def build_validation_annotation():
     validation_annotation = ValidationAnnotation()
-    validation_categories = {"patty2":1799,
-                       "patty5":2006,
-                       "catch40": 1360,
-                       "convo53":2323}
+    validation_categories = {
+        "patty5": 2006,
+        "catch40": 1360,
+        "convo53": 2323
+    }
 
     for cat in validation_categories:
         count = 0
@@ -31,6 +32,7 @@ def build_validation_annotation():
             count -= 256
         validation_annotation.anns.append((cat, 257))
     return validation_annotation
+
 
 def main(args):
     anns = build_validation_annotation()
@@ -52,7 +54,7 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--validation_annotation_path', type=str, required=True, help='path to base dir for all captures')
+    parser.add_argument('--validation_annotation_path', type=str, required=True,
+                        help='path to base dir for all captures')
     args = parser.parse_args()
     main(args)
-

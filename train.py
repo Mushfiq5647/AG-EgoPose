@@ -1,15 +1,13 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
-
 import argparse
+from sched import scheduler
+
 import torch
 import torch.nn as nn
 import numpy as np
 import os
 import pickle
-import json
-import _compat_pickle
 from utils.data_loader import get_loader
-from utils.build_vocab import Vocabulary
 from utils.build_annotation import Annotation
 from action_recognition import ActionFormerFeatureExtractor
 from action_recognition import initialize_actionformer
@@ -18,9 +16,7 @@ from torch.nn.utils.rnn import pack_padded_sequence
 from utils.build_annotation import Annotation
 from utils.build_validation_annotation import ValidationAnnotation
 from torchvision import transforms
-from torch.cuda.amp import GradScaler, autocast
 torch.set_printoptions(threshold=torch.inf)
-# Device configuration
 torch.manual_seed(7)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -51,10 +47,8 @@ unidirectional_connections = [
     (16, 17), (17, 18), (18, 19)
 ]
 
-# Initialize lists for edge indices
 edge_index = [[], []]
 
-# Add bidirectional edges (both directions for each pair)
 for joint_a, joint_b in bidirectional_connections:
     for j in range(coords_per_joint):
         edge_index[0].append(joint_a * coords_per_joint + j)
@@ -74,31 +68,18 @@ for joint in range(num_joints):
         edge_index[0].append(joint * coords_per_joint + j)
         edge_index[1].append(joint * coords_per_joint + j)
 
-print("Edge index:", edge_index)
-# Convert to tensor
 edge_index = torch.tensor(edge_index, dtype=torch.long)
-
-
-
-# Convert to tensor
-edge_index = torch.tensor(edge_index, dtype=torch.long)
-
-# Evaluation function
 
 def mean_per_joint_position_error(predicted, target):
-    # Reshape the data from (batch_size, sequence_length, 75) to (batch_size, sequence_length, 25, 3)
     print(f"Predicted shape: {predicted.shape}")
     print(f"Target shape: {target.shape}")
 
     predicted = predicted.view(predicted.size(0), 25, 3)
     target = target.view(target.size(0), 25, 3)
-
-    # Compute the Euclidean distance (L2 norm) between predicted and target for each joint
-    error = torch.norm(predicted - target, dim=-1)  # L2 norm along the last dimension (x, y, z)
-
-    # Compute the mean over all joints, frames, and batches
-    mpjpe = torch.mean(error)  # Average over all joints and frames
+    error = torch.norm(predicted - target, dim=-1)
+    mpjpe = torch.mean(error)
     return mpjpe.item()
+
 def evaluate(encoder, decoder, data_loader, criterion):
     encoder.eval()
     decoder.eval()
@@ -146,7 +127,7 @@ def main(args):
     print("Data Loading complete", len(data_loader))
     print("Total dataset", len(data_loader.dataset))
     print("Total Validation dataset", len(val_loader.dataset))
-    encoder = EncoderCNN(args.embed_size).to(device)
+    encoder = EncoderCNN(args.embed_size,actionformer_feature_extractor).to(device)
     temporal_gcn = TemporalGCN(
                          args.hidden_size,
                          args.seq_length,
@@ -159,15 +140,14 @@ def main(args):
                      args.num_layers,
                      temporal_gcn).to(device)
 
-
     # loss and optimizer
     criterion = nn.MSELoss()
     params = list(decoder.parameters()) + list(encoder.linear.parameters()) + list(encoder.bn.parameters())
-    optimizer = torch.optim.Adam(params, lr=args.learning_rate)
-    # scaler = GradScaler()
-    # train the models
+    optimizer = torch.optim.Adam(params, lr=args.learning_rate, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, verbose=True)
     total_step = len(data_loader)
-    # print ("total iter", total_step)
+    best_val_loss = float('inf')
+    model_dir = os.path.abspath('./utils/trained_ckpt_actionformer')
     for epoch in range(args.num_epochs):
         print("Printing epoch:", epoch)
         for i, (images, gt_egoposes, homography, poses2, lengths) in enumerate(data_loader):
@@ -175,27 +155,13 @@ def main(args):
             images = images.to(device)
             print("Image shape", images.shape)
             gt_egoposes = gt_egoposes.to(device)
-
-            # Squeeze the targets to make them 1D
             targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
-
-            print("In train Pose shape:", gt_egoposes.shape)
-            print("In train Modified targets shape:", targets.shape)
-            # with open('sample_targets.txt', 'a') as f:
-            # 	f.write(f'{targets}\n')
-
-            print("Before feature")
-            # Forward pass
-            # with autocast():
             features = encoder(images)
+            print("Encoded feature shape", features.shape)
             outputs = decoder(features, lengths, homography, poses2)
-            # with open('sample_outputs.txt', 'a') as f:
-            # 	f.write(f'{outputs}\n')
-            # outputs = outputs.view(-1, 75)
             loss = criterion(outputs, targets)
             if torch.isnan(loss):
                 print(f"NaN detected! Epoch: {epoch}, Iteration: {i}")
-                # Optionally break the loop or save the current state for debugging
                 break
             decoder.zero_grad()
             encoder.zero_grad()
@@ -206,22 +172,12 @@ def main(args):
             if i % args.log_step == 0:
                 print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Perplexity: {:5.4f}'
                       .format(epoch, args.num_epochs, i, total_step, loss.item(), np.exp(loss.item())))
-    # loss and optimizer
-    criterion = nn.MSELoss()
-    params = list(decoder.parameters()) + list(encoder.linear.parameters()) + list(encoder.bn.parameters())
-    optimizer = torch.optim.Adam(params, lr=args.learning_rate)
-
-    best_val_loss = float('inf')
-    model_dir = os.path.abspath('./utils/trained_ckpt_you2me')
 
     # File to store evaluation results
     eval_results_file = os.path.join('best_model_evaluation.txt')
     with open(eval_results_file, 'w') as f:
         f.write("Epoch\tValidation Loss\n")
-    # scaler = GradScaler()
-    # train the models
     total_step = len(data_loader)
-    # print ("total iter", total_step)
     for epoch in range(args.num_epochs):
         print("Printing epoch:", epoch)
         encoder.train()
@@ -250,6 +206,9 @@ def main(args):
                       .format(epoch, args.num_epochs, i, total_step, loss.item(), np.exp(loss.item())))
 
         val_mpjpe = evaluate(encoder, decoder, val_loader, criterion)
+        scheduler.step(val_mpjpe)
+        current_lr = optimizer.param_groups[0]['lr']
+        print("Current learning rate:", current_lr)
         print(f'Epoch [{epoch + 1}] Validation Loss: {val_mpjpe:.4f}')
 
         # Save the model only if validation loss improves
@@ -266,12 +225,10 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('--config_path', type=str, default='actionformer/config/anet_tsp.yaml', help='path to the config file')
     parser.add_argument('--model_path', type=str, required=True, help='path for saving trained models')
     parser.add_argument('--annotation_path', type=str, required=True, help='path for annotation wrapper')
     parser.add_argument('--validation_annotation_path', type=str, required=True, help='path for validation annotation wrapper')
-
-    parser.add_argument('--upp', action='store_true', help='set flag if training upper body model')
-    parser.add_argument('--low', action='store_true', help='set flag if training lower body model')
 
     parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect',
                         help='directory for resized images')

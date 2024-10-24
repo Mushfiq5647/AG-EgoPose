@@ -20,23 +20,7 @@ class ActionFormerFeatureExtractor(nn.Module):
             batch_size, channels, sequence_length = x.shape
             #Create a default mask: all elements are valid (True)
             mask = torch.ones((batch_size, channels, sequence_length), dtype=torch.bool, device=x.device)
-
-        # mask: batch size, 1, sequence length (bool)
         features = {}
-
-        # #Embedding layers
-        # embd_out = []
-        # for embd_layer in self.model.backbone.embd:
-        #     x = embd_layer(x, mask)
-        #     embd_out.append(x)
-        # features['embd'] = embd_out
-        #
-        # #Stem layers (attention blocks)
-        # stem_out = []
-        # for stem_layer in self.model.backbone.stem:
-        #     x = stem_layer(x, mask)
-        #     stem_out.append(x)
-        # features['stem'] = stem_out
 
         stem_out = []
         for stem_layer in self.model.backbone.stem:
@@ -52,18 +36,6 @@ class ActionFormerFeatureExtractor(nn.Module):
             branch_out.append(branch_features)
         features['branch'] = branch_out
         print("Branch layer integrated",type(features))
-
-
-
-        #Classification head (penultimate layer for global features)
-        cls_out = []
-        for head_layer in self.model.cls_head.head:
-            head_features = head_layer(x, mask)
-            cls_out.append(head_features)
-        features['cls_head'] = cls_out
-        # Optional: Final classification layer output
-        features['final_output'] = self.model.cls_head.cls_head(x, mask)
-        print("Stem, Branch and Head layers integrated")
         return features
 
 def initialize_actionformer(config_file_path):
@@ -80,14 +52,7 @@ def initialize_actionformer(config_file_path):
     # Wrap the model with the feature extractor
     actionformer_feature_extractor = ActionFormerFeatureExtractor(actionformer_model)
     print(actionformer_feature_extractor)
-    # Extract features without updating weights
-
-    # Freeze ActionFormer model weights
     for param in actionformer_model.parameters():
         param.requires_grad = False
 
     return actionformer_feature_extractor
-
-
-# # Display keys of extracted features for verification
-# print("Extracted feature types:", extracted_features.keys())
