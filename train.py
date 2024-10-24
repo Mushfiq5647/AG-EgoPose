@@ -40,7 +40,6 @@ bidirectional_connections = [
     (0, 16)  # SpineBase <-> HipRight
 ]
 
-# Define unidirectional connections for limbs and extended parts
 unidirectional_connections = [
     # Left arm chain
     (20, 4), (4, 5), (5, 6), (6, 7), (6, 22), (7, 21),
@@ -122,17 +121,15 @@ def evaluate(encoder, decoder, data_loader, criterion):
     return avg_mpjpe
 
 def main(args):
-	actionformer_feature_extractor = initialize_actionformer(config_file_path=args.config_path)
-
-	# create model directory
-	if not os.path.exists(args.model_path):
-		os.makedirs(args.model_path)
-	# image preprocessing
-	transform = transforms.Compose([
-		transforms.Resize(args.crop_size),
-		transforms.ToTensor(),
-		transforms.Normalize((0.485, 0.456, 0.406),
-			(0.229, 0.224, 0.225))])
+    actionformer_feature_extractor = initialize_actionformer(config_file_path=args.config_path)
+    if not os.path.exists(args.model_path):
+        os.makedirs(args.model_path)
+    # image preprocessing
+    transform = transforms.Compose([
+        transforms.Resize(args.crop_size),
+        transforms.ToTensor(),
+        transforms.Normalize((0.485, 0.456, 0.406),
+            (0.229, 0.224, 0.225))])
 
     with open(args.annotation_path, 'rb') as f:
         annotation = pickle.load(f)
@@ -151,64 +148,64 @@ def main(args):
     print("Total Validation dataset", len(val_loader.dataset))
     encoder = EncoderCNN(args.embed_size).to(device)
     temporal_gcn = TemporalGCN(
-						 args.hidden_size,
-						 args.seq_length,
-						 edge_index,
-						 output_dim=75,
-						 kernel_size=7).to(device)
-decoder = DecoderRNN(args.embed_size,
+                         args.hidden_size,
+                         args.seq_length,
+                         edge_index,
+                         output_dim=75,
+                         kernel_size=7).to(device)
+    decoder = DecoderRNN(args.embed_size,
                      args.hidden_size,
                      args.seq_length,
                      args.num_layers,
                      temporal_gcn).to(device)
 
 
-	# loss and optimizer
-	criterion = nn.MSELoss()
-	params = list(decoder.parameters()) + list(encoder.linear.parameters()) + list(encoder.bn.parameters())
-	optimizer = torch.optim.Adam(params, lr=args.learning_rate)
-	# scaler = GradScaler()
-	# train the models
-	total_step = len(data_loader)
-	# print ("total iter", total_step)
-	for epoch in range(args.num_epochs):
-		print("Printing epoch:", epoch)
-		for i, (images, gt_egoposes, homography, poses2, lengths) in enumerate(data_loader):
-			print("Printing iteration number:", i)
-			images = images.to(device)
-			print("Image shape", images.shape)
-			gt_egoposes = gt_egoposes.to(device)
+    # loss and optimizer
+    criterion = nn.MSELoss()
+    params = list(decoder.parameters()) + list(encoder.linear.parameters()) + list(encoder.bn.parameters())
+    optimizer = torch.optim.Adam(params, lr=args.learning_rate)
+    # scaler = GradScaler()
+    # train the models
+    total_step = len(data_loader)
+    # print ("total iter", total_step)
+    for epoch in range(args.num_epochs):
+        print("Printing epoch:", epoch)
+        for i, (images, gt_egoposes, homography, poses2, lengths) in enumerate(data_loader):
+            print("Printing iteration number:", i)
+            images = images.to(device)
+            print("Image shape", images.shape)
+            gt_egoposes = gt_egoposes.to(device)
 
-			# Squeeze the targets to make them 1D
-			targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
+            # Squeeze the targets to make them 1D
+            targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
 
-			print("In train Pose shape:", gt_egoposes.shape)
-			print("In train Modified targets shape:", targets.shape)
-			# with open('sample_targets.txt', 'a') as f:
-			# 	f.write(f'{targets}\n')
+            print("In train Pose shape:", gt_egoposes.shape)
+            print("In train Modified targets shape:", targets.shape)
+            # with open('sample_targets.txt', 'a') as f:
+            # 	f.write(f'{targets}\n')
 
-			print("Before feature")
-			# Forward pass
-			# with autocast():
-			features = encoder(images)
-			outputs = decoder(features, lengths, homography, poses2)
-			# with open('sample_outputs.txt', 'a') as f:
-			# 	f.write(f'{outputs}\n')
-			# outputs = outputs.view(-1, 75)
-			loss = criterion(outputs, targets)
-			if torch.isnan(loss):
-				print(f"NaN detected! Epoch: {epoch}, Iteration: {i}")
-				# Optionally break the loop or save the current state for debugging
-				break
-			decoder.zero_grad()
-			encoder.zero_grad()
-			loss.backward()
-			torch.nn.utils.clip_grad_norm_(decoder.parameters(), args.clip_value)
-			torch.nn.utils.clip_grad_norm_(encoder.parameters(), args.clip_value)
-			optimizer.step()
-			if i % args.log_step == 0:
-				print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Perplexity: {:5.4f}'
-					  .format(epoch, args.num_epochs, i, total_step, loss.item(), np.exp(loss.item())))
+            print("Before feature")
+            # Forward pass
+            # with autocast():
+            features = encoder(images)
+            outputs = decoder(features, lengths, homography, poses2)
+            # with open('sample_outputs.txt', 'a') as f:
+            # 	f.write(f'{outputs}\n')
+            # outputs = outputs.view(-1, 75)
+            loss = criterion(outputs, targets)
+            if torch.isnan(loss):
+                print(f"NaN detected! Epoch: {epoch}, Iteration: {i}")
+                # Optionally break the loop or save the current state for debugging
+                break
+            decoder.zero_grad()
+            encoder.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(decoder.parameters(), args.clip_value)
+            torch.nn.utils.clip_grad_norm_(encoder.parameters(), args.clip_value)
+            optimizer.step()
+            if i % args.log_step == 0:
+                print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Perplexity: {:5.4f}'
+                      .format(epoch, args.num_epochs, i, total_step, loss.item(), np.exp(loss.item())))
     # loss and optimizer
     criterion = nn.MSELoss()
     params = list(decoder.parameters()) + list(encoder.linear.parameters()) + list(encoder.bn.parameters())
