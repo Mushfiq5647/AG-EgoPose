@@ -36,13 +36,12 @@ Please generate
 - directory of homographies (see calc_homgraphy/README.md)
 - directory of openpose predictions
 - vocab.pkl (see vocab/build_vocab.py)
-- annotation.pkl (see vocab/build_annotation.py)
+- annotation.pkl (see vocab/build_annotation.py) 
 
-for your each of your training sequences.
 
 Then run the following command:
 
-`python train.py --model_path ./utils/model.py --vocab_path ./vocab/vocab_py3.pkl --annotation_path ./vocab/annotation.pkl --upp`
+`python train.py --model_path ./utils/model.py --annotation_path ./vocab/train_annotation.pkl --validation_annotation_path ./vocab/validation_annotation.pkl`
 
 
 For testing:
