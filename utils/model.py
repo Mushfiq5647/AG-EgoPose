@@ -104,8 +104,6 @@ class EncoderCNN(nn.Module):
 			features = self.bn(self.linear(features))
 			feat_block.append(features)
 		feat_block = torch.stack(feat_block, dim=1)
-		# combined_features = torch.cat((feat_block, compact_branch_features), dim=-1)
-		# print("Feature block", type(feat_block), combined_features.shape)
 		return feat_block
 
 class DecoderRNN(nn.Module):
@@ -138,9 +136,9 @@ class DecoderRNN(nn.Module):
 			embeddings = torch.cat((features, homography, poses2), dim=-1)
 			print("Embeddings shape", embeddings.shape)
 		gcn_outputs = self.temporal_gcn(embeddings)
+		print("GCN outputs shape", gcn_outputs.shape)
 		packed = pack_padded_sequence(gcn_outputs, lengths, batch_first=True)
-
-
+		print("Packed shape", type(packed))
 		hiddens, _ = self.lstm(packed)
 		final_outputs = self.linear(hiddens[0])
 		print("Output shape", final_outputs.shape)

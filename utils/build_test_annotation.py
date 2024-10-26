@@ -19,13 +19,11 @@ class TestAnnotation(object):
 def build_test_annotation():
     test_annotation = TestAnnotation()
     test_categories = {"patty1":1957,
-                       "patty2":1799,
-                       "patty5":2006,
                        "patty32":2657,
                        "patty34":1787,
                        "patty35":1421,
+                       "catch41": 1698,
                        "catch55":2257,
-                       "convo53":2323,
                        "convo54":2808,
                        "convo59":2887,
                        "sport57":3732}
@@ -63,4 +61,3 @@ if __name__ == '__main__':
     parser.add_argument('--test_annotation_path', type=str, required=True, help='path to base dir for all captures')
     args = parser.parse_args()
     main(args)
-

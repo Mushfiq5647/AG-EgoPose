@@ -42,11 +42,11 @@ for your each of your training sequences.
 
 Then run the following command:
 
-`python train.py --model_path ./utils/model.py --vocab_path ./vocab/vocab_py3.pkl --annotation_path ./vocab/annotation.pkl`
+`python train.py --model_path ./utils/model.py --annotation_path ./vocab/train_annotation.pkl --validation_annotation_path ./vocab/validation_annotation.pkl`
 
 
 For testing:
-`python test.py --encoder_path ./utils/trained_ckpt_actionformer/encoder-20-61.ckpt --decoder_path ./utils/trained_ckpt_actionformer/decoder-20-61.ckpt --output_dir ./outputs --vocab_path ./vocab/vocab_py3.pkl --test_annotation_path ./vocab/test_annotation.pkl`
+`python test.py --encoder_path ./utils/trained_ckpt_you2me/encoder-10-57.ckpt --decoder_path ./utils/trained_ckpt_you2me/decoder-10-57.ckpt --test_annotation_path ./vocab/test_annotation.pkl`
 
 Change flag `--upp` to `--low` to train the lower body model.
 
