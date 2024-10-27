@@ -24,6 +24,7 @@ class TemporalGCN(nn.Module):
 		edge_index = self.edge_index.to(device)
 		x = self.gcn1(combined_features, edge_index)
 		x = torch.relu(x)
+		print("In GCN")
 		x = self.gcn2(x, edge_index)
 		x = torch.relu(x)
 		return x
@@ -120,6 +121,7 @@ class DecoderRNN(nn.Module):
 			homography = homography.to(device)
 			poses2 = poses2.to(device)
 			embeddings = torch.cat((features, homography), dim=-1)
+			print("Embeddings shape", embeddings.shape)
 		gcn_outputs = self.temporal_gcn(embeddings)
 		packed = pack_padded_sequence(gcn_outputs, lengths, batch_first=True)
 		hiddens, _ = self.lstm(packed)

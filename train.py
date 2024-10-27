@@ -143,40 +143,14 @@ def main(args):
     # loss and optimizer
     criterion = nn.MSELoss()
     params = list(decoder.parameters()) + list(encoder.linear.parameters()) + list(encoder.bn.parameters())
-    optimizer = torch.optim.Adam(params, lr=args.learning_rate, weight_decay=1e-5)
+    optimizer = torch.optim.Adam(params, lr=args.learning_rate)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, verbose=True)
-    total_step = len(data_loader)
     best_val_loss = float('inf')
     model_dir = os.path.abspath('./utils/trained_ckpt_actionformer')
-    for epoch in range(args.num_epochs):
-        print("Printing epoch:", epoch)
-        for i, (images, gt_egoposes, homography, poses2, lengths) in enumerate(data_loader):
-            print("Printing iteration number:", i)
-            images = images.to(device)
-            print("Image shape", images.shape)
-            gt_egoposes = gt_egoposes.to(device)
-            targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
-            features = encoder(images)
-            print("Encoded feature shape", features.shape)
-            outputs = decoder(features, lengths, homography, poses2)
-            loss = criterion(outputs, targets)
-            if torch.isnan(loss):
-                print(f"NaN detected! Epoch: {epoch}, Iteration: {i}")
-                break
-            decoder.zero_grad()
-            encoder.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(decoder.parameters(), args.clip_value)
-            torch.nn.utils.clip_grad_norm_(encoder.parameters(), args.clip_value)
-            optimizer.step()
-            if i % args.log_step == 0:
-                print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Perplexity: {:5.4f}'
-                      .format(epoch, args.num_epochs, i, total_step, loss.item(), np.exp(loss.item())))
-
     # File to store evaluation results
     eval_results_file = os.path.join('best_model_evaluation.txt')
     with open(eval_results_file, 'w') as f:
-        f.write("Epoch\tValidation Loss\n")
+        f.write("Epoch\tMPJPE\n")
     total_step = len(data_loader)
     for epoch in range(args.num_epochs):
         print("Printing epoch:", epoch)
@@ -204,10 +178,20 @@ def main(args):
             if i % args.log_step == 0:
                 print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Perplexity: {:5.4f}'
                       .format(epoch, args.num_epochs, i, total_step, loss.item(), np.exp(loss.item())))
+                torch.save(decoder.state_dict(), os.path.join(model_dir, 'decoder-{}-{}.ckpt'.format(epoch + 1, i + 1)))
+                torch.save(encoder.state_dict(), os.path.join(model_dir, 'encoder-{}-{}.ckpt'.format(epoch + 1, i + 1)))
+
+            if ((i + 1) % args.save_step == 0) or (i == total_step - 1):
+                torch.save(decoder.state_dict(),
+                           os.path.join(model_dir, 'decoder-{}-{}.ckpt'.format(epoch + 1, i + 1)))
+                torch.save(encoder.state_dict(),
+                           os.path.join(model_dir, 'encoder-{}-{}.ckpt'.format(epoch + 1, i + 1)))
 
         val_mpjpe = evaluate(encoder, decoder, val_loader, criterion)
         scheduler.step(val_mpjpe)
         current_lr = optimizer.param_groups[0]['lr']
+        with open('eval_result.txt', 'a') as f:
+            f.write(f'{epoch + 1}\t{val_mpjpe:.4f}\n')
         print("Current learning rate:", current_lr)
         print(f'Epoch [{epoch + 1}] Validation Loss: {val_mpjpe:.4f}')
 
@@ -215,12 +199,12 @@ def main(args):
         if val_mpjpe < best_val_loss:
             print(f"Validation loss improved from {best_val_loss:.4f} to {val_mpjpe:.4f}, saving model...")
             best_val_loss = val_mpjpe
-            torch.save(decoder.state_dict(), os.path.join(model_dir, 'decoder-{}-{}.ckpt'.format(epoch + 1, i + 1)))
-            torch.save(encoder.state_dict(), os.path.join(model_dir, 'encoder-{}-{}.ckpt'.format(epoch + 1, i + 1)))
-
             # Log the best validation loss
             with open(eval_results_file, 'a') as f:
                 f.write(f'{epoch + 1}\t{val_mpjpe:.4f}\n')
+
+
+
 
 
 if __name__ == '__main__':
