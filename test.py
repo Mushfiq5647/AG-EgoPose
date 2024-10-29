@@ -39,21 +39,8 @@ def main(args):
         transforms.Normalize((0.485, 0.456, 0.406),
                              (0.229, 0.224, 0.225))])
 
-    # Create output folder if it doesn't exist
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
-
-    output_file = os.path.join(args.output_dir, "mpjpe_results.txt")
-
-    # Load vocab wrapper
-    with open(args.vocab_path, 'rb') as f:
-        vocab = pickle.load(f)
-
     with open(args.test_annotation_path, 'rb') as f:
         annotation = pickle.load(f)
-
-    upp_size, low_size = vocab.get_shapes()
-    vocab_size = upp_size
 
     # Build data loader
     data_loader = get_loader(annotation, args.image_dir, args.h_dir, args.openpose_dir, transform,
@@ -75,24 +62,23 @@ def main(args):
 
     total_mpjpe = 0
     with torch.no_grad():
-        with open(output_file, "w") as f_out:
-            for i, (images, gt_egoposes, homography, poses2, lengths) in enumerate(data_loader):
-                images = images.to(device)
-                gt_egoposes = gt_egoposes.to(device)
-                targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
-                # Forward pass
-                features = encoder(images)
-                outputs = decoder(features, lengths, homography, poses2)
+        for i, (images, gt_egoposes, homography, poses2, lengths) in enumerate(data_loader):
+            images = images.to(device)
+            gt_egoposes = gt_egoposes.to(device)
+            targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
+            # Forward pass
+            features = encoder(images)
+            outputs = decoder(features, lengths, homography, poses2)
 
-                # Calculate MPJPE
-                mpjpe = mean_per_joint_position_error(outputs, targets)
-                total_mpjpe += mpjpe
+            # Calculate MPJPE
+            mpjpe = mean_per_joint_position_error(outputs, targets)
+            total_mpjpe += mpjpe
 
-                if (i + 1) % args.log_step == 0:
-                    print(f'Batch [{i + 1}/{len(data_loader)}], MPJPE: {mpjpe:.4f}')
+            if (i + 1) % args.log_step == 0:
+                print(f'Batch [{i + 1}/{len(data_loader)}], MPJPE: {mpjpe:.4f}')
 
-            avg_mpjpe = total_mpjpe / len(data_loader)
-            print(f'Average MPJPE: {avg_mpjpe:.4f}')
+        avg_mpjpe = total_mpjpe / len(data_loader)
+        print(f'Average MPJPE: {avg_mpjpe:.4f}')
 
 
 if __name__ == '__main__':
@@ -101,8 +87,6 @@ if __name__ == '__main__':
     # Model and data paths
     parser.add_argument('--encoder_path', type=str, required=True, help='path for trained encoder')
     parser.add_argument('--decoder_path', type=str, required=True, help='path for trained decoder')
-    parser.add_argument('--output_dir', type=str, required=True, help='path for outputs')
-    parser.add_argument('--vocab_path', type=str, required=True,help='path for vocabulary wrapper')
     parser.add_argument('--test_annotation_path', type=str, required=True, help='path for annotation wrapper')
 
     # Directories
