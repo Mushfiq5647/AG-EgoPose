@@ -18,11 +18,12 @@ class TestAnnotation(object):
 
 def build_test_annotation():
     test_annotation = TestAnnotation()
-    test_categories = {"patty1":1957,
+    test_categories = {"patty31":1410,
                        "patty32":2657,
                        "patty34":1787,
                        "patty35":1421,
                        "catch41": 1698,
+                       "catch42": 2258,
                        "catch55":2257,
                        "convo54":2808,
                        "convo59":2887,

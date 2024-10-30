@@ -3,10 +3,12 @@ actionformer/config/
 actionformer/epoch_014.pth.tar
 actionformer/epoch_015.pth.tar
 actionformer/epoch_035.pth.tar
-utils/trained_ckpt_actionformer
-utils/trained_ckpt_you2me
+utils/kinect_trained_ckpt_actionformer
+utils/kinect_trained_ckpt_final
 you2me_ds_release_cmu (1)/
 you2me_ds_release_kinect/
+annotations.json
+test_annotations.json
 # Ignore Python cache files
 __pycache__/
 .idea/

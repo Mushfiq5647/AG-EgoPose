@@ -122,7 +122,6 @@ def main(args):
         avg_mpjpe = total_mpjpe / len(data_loader)
         print(f'Average MPJPE: {avg_mpjpe:.4f}')
 
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
