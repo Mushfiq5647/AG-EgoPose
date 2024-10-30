@@ -18,15 +18,6 @@ class TemporalGCN(nn.Module):
 		self.input_size = sequence_length + (homog_size * num_homog) + output_dim
 		self.gcn1 = GCNConv(self.input_size, hidden_dim)
 		self.gcn2 = GCNConv(hidden_dim, hidden_dim)
-
-		# Temporal Convolution (for temporal dependencies)
-		# self.temporal_conv = nn.Conv1d(in_channels=hidden_dim,
-		# 							   out_channels=hidden_dim,
-		# 							   kernel_size=kernel_size,
-		# 							   padding=kernel_size // 2)  # Maintain the sequence length
-		#
-		# Linear layer to output 75 joint coordinates
-		# self.linear = nn.Linear(hidden_dim, output_dim)
 		self.edge_index = edge_index
 
 	def forward(self, combined_features):
@@ -35,14 +26,6 @@ class TemporalGCN(nn.Module):
 		edge_index = self.edge_index.to(device)
 		x = self.gcn1(combined_features, edge_index)
 		x = torch.relu(x)
-		#
-		# # Reshape for temporal convolution (change from [batch_size * sequence_length, num_joints, hidden_dim]
-		# batch_size_seq_len, num_joints, hidden_dim = x.shape
-		# x_view = x.view(-1, num_joints, hidden_dim)
-		# x = x.permute(0, 2, 1)
-		# x = self.temporal_conv(x)  # Apply 1D conv along the temporal axis
-		# x = x.permute(0, 2, 1)  # Shape back to [batch_size * sequence_length, num_joints, hidden_dim]
-
 		x = self.gcn2(x, edge_index)
 		x = torch.relu(x)
 		return x
@@ -61,7 +44,6 @@ class EncoderCNN(nn.Module):
 		feat_block = []
 		with torch.no_grad():
 			actionformer_features = self.actionformer_model(images)
-			# Assuming 'features' is the dictionary containing the keys 'cls_head' and 'final_output'
 			stem_features = actionformer_features.get('stem')
 			branch_features = actionformer_features.get('branch')
 

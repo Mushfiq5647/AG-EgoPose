@@ -11,7 +11,7 @@ import _compat_pickle
 from utils.data_loader import get_loader
 from utils.build_vocab import Vocabulary
 from utils.build_annotation import Annotation
-from utils.build_validation_annotation import ValidationAnnotation
+from torch.optim.lr_scheduler import MultiStepLR
 from action_recognition import ActionFormerFeatureExtractor
 from action_recognition import initialize_actionformer
 from utils.model import EncoderCNN, DecoderRNN, TemporalGCN
@@ -78,40 +78,6 @@ print("Edge index:", edge_index)
 # Convert to tensor
 edge_index = torch.tensor(edge_index, dtype=torch.long)
 
-def mean_per_joint_position_error(predicted, target):
-    # Reshape the data from (batch_size, sequence_length, 75) to (batch_size, sequence_length, 25, 3)
-    print(f"Predicted shape: {predicted.shape}")
-    print(f"Target shape: {target.shape}")
-
-    predicted = predicted.view(predicted.size(0), 25, 3)
-    target = target.view(target.size(0), 25, 3)
-
-    # Compute the Euclidean distance (L2 norm) between predicted and target for each joint
-    error = torch.norm(predicted - target, dim=-1)  # L2 norm along the last dimension (x, y, z)
-
-    # Compute the mean over all joints, frames, and batches
-    mpjpe = torch.mean(error)  # Average over all joints and frames
-    return mpjpe.item()
-def evaluate(encoder, decoder, data_loader, criterion):
-    encoder.eval()
-    decoder.eval()
-    total_loss = 0
-    total_mpjpe = 0
-    with torch.no_grad():
-        for images, gt_egoposes, homography, poses2, lengths in data_loader:
-            images = images.to(device)
-            gt_egoposes = gt_egoposes.to(device)
-
-            features = encoder(images)
-            outputs = decoder(features, lengths, homography, poses2)
-
-            targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
-            mpjpe = mean_per_joint_position_error(outputs, targets)
-            total_mpjpe += mpjpe
-        avg_mpjpe = total_mpjpe / len(data_loader)
-        print(f'Average MPJPE: {avg_mpjpe:.4f}')
-
-    return avg_mpjpe
 def main(args):
 	actionformer_feature_extractor = initialize_actionformer(config_file_path=args.config_path)
 
@@ -129,19 +95,14 @@ def main(args):
 		annotation = pickle.load(f)
 	print("annotations size:", len(annotation))
 
-	with open(args.validation_annotation_path, 'rb') as f:
-		validation_annotation = pickle.load(f)
 	# build data loader
 	data_loader = get_loader(annotation, args.image_dir, args.h_dir, args.openpose_dir, transform,
 							 args.batch_size, shuffle=True, num_workers=args.num_workers, seq_length=args.seq_length)
-
-	val_loader = get_loader(validation_annotation, args.image_dir, args.h_dir, args.openpose_dir, transform,
-							args.batch_size, shuffle=False, num_workers=args.num_workers, seq_length=args.seq_length)
 	print("Data Loading complete", len(data_loader))
 	print("Total dataset", len(data_loader.dataset))
 	encoder = EncoderCNN(args.embed_size, actionformer_feature_extractor).to(device)
 
-	model_dir = os.path.abspath('./utils/trained_ckpt_actionformer')
+	model_dir = os.path.abspath('./utils/kinect_trained_ckpt_you2megcn')
 	temporal_gcn = TemporalGCN(
 						 args.hidden_size,
 						 args.seq_length,
@@ -158,17 +119,6 @@ def main(args):
 	criterion = nn.MSELoss()
 	params = list(decoder.parameters()) + list(encoder.linear.parameters()) + list(encoder.bn.parameters())
 	optimizer = torch.optim.Adam(params, lr=args.learning_rate)
-	scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-		optimizer, mode='min', factor=0.5, patience=3, verbose=True
-	)
-
-	best_val_loss = float('inf')
-	model_dir = os.path.abspath('./utils/trained_ckpt_you2me')
-
-	# File to store evaluation results
-	eval_results_file = os.path.join('best_model_evaluation.txt')
-	with open(eval_results_file, 'w') as f:
-		f.write("Epoch\tMPJPE\n")
 	total_step = len(data_loader)
 	# print ("total iter", total_step)
 	for epoch in range(args.num_epochs):
@@ -203,29 +153,14 @@ def main(args):
 						   os.path.join(model_dir, 'decoder-{}-{}.ckpt'.format(epoch + 1, i + 1)))
 				torch.save(encoder.state_dict(),
 						   os.path.join(model_dir, 'encoder-{}-{}.ckpt'.format(epoch + 1, i + 1)))
-		val_mpjpe = evaluate(encoder, decoder, val_loader, criterion)
-		print(f'Epoch [{epoch + 1}] Validation Loss: {val_mpjpe:.4f}')
-		with open('validation_result.txt', 'a') as f:
-			f.write(f'{epoch + 1}\t\t{val_mpjpe:.4f}\n')
-		scheduler.step(val_mpjpe)
-		# Print the current learning rate
-		current_lr = optimizer.param_groups[0]['lr']  # Access the learning rate of the first parameter group
+		current_lr = optimizer.param_groups[0]['lr']
 		print(f'Current Learning Rate: {current_lr:.6f}')
-
-		# Save the model only if validation loss improves
-		if val_mpjpe < best_val_loss:
-			print(f"Validation loss improved from {best_val_loss:.4f} to {val_mpjpe:.4f}, saving model...")
-			best_val_loss = val_mpjpe
-			# Log the best validation loss
-			with open(eval_results_file, 'a') as f:
-				f.write(f'{epoch + 1}\t\t{val_mpjpe:.4f}\n')
 
 if __name__== '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--config_path', type=str, default='actionformer/config/anet_tsp.yaml', help='path to the config file')
 	parser.add_argument('--model_path', type=str, required=True, help='path for saving trained models')
 	parser.add_argument('--annotation_path', type=str, required=True, help='path for annotation wrapper')
-	parser.add_argument('--validation_annotation_path', type=str, required=True, help='path for validation annotation wrapper')
 
 	parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for resized images')
 	parser.add_argument('--h_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for resized images')
