@@ -36,9 +36,8 @@ Please generate
 - directory of homographies (see calc_homgraphy/README.md)
 - directory of openpose predictions
 - vocab.pkl (see vocab/build_vocab.py)
-- annotation.pkl (see vocab/build_annotation.py)
+- annotation.pkl (see vocab/build_annotation.py) 
 
-for your each of your training sequences.
 
 Then run the following command:
 
@@ -46,7 +45,7 @@ Then run the following command:
 
 
 For testing:
-`python test.py --encoder_path ./utils/trained_ckpt/encoder-20-61.ckpt --decoder_path ./utils/trained_ckpt/decoder-20-61.ckpt --output_dir ./outputs --vocab_path ./vocab/vocab_py3.pkl --test_annotation_path ./vocab/test_annotation.pkl`
+`python test.py --encoder_path ./utils/trained_ckpt_you2me/encoder-20-61.ckpt --decoder_path ./utils/trained_ckpt_you2me/decoder-20-61.ckpt --test_annotation_path ./vocab/test_annotation.pkl`
 
 Change flag `--upp` to `--low` to train the lower body model.
 
