@@ -82,9 +82,7 @@ def main(args):
     temporal_gcn = TemporalGCN(
         args.hidden_size,
         args.seq_length,
-        edge_index,
-        output_dim=75,
-        kernel_size=7).to(device)
+        edge_index).to(device)
 
     decoder = DecoderRNN(args.embed_size,
                          args.hidden_size,
@@ -101,17 +99,16 @@ def main(args):
 
     total_mpjpe = 0
     with torch.no_grad():
-        for i, (images, gt_egoposes, homography, poses2, lengths) in enumerate(data_loader):
+        for i, (images, gt_egoposes, mhi, lengths) in enumerate(data_loader):
             images = images.to(device)
             gt_egoposes = gt_egoposes.to(device)
             targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
             # Forward pass
             features = encoder(images)
-            outputs = decoder(features, lengths, homography, poses2)
+            outputs = decoder(features, lengths, mhi)
             print("Outputs:", outputs.shape)
             print("Targets:", targets.shape)
             outputs = outputs.view(-1, 75)
-
             # Calculate MPJPE
             mpjpe = mean_per_joint_position_error(outputs, targets)
             total_mpjpe += mpjpe

@@ -11,9 +11,9 @@ from torch.nn.utils.rnn import pack_padded_sequence
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 class TemporalGCN(nn.Module):
-	def __init__(self, hidden_dim, sequence_length, edge_index, output_dim=75, kernel_size=9, num_homog=15, homog_size=9):
+	def __init__(self, hidden_dim, sequence_length, edge_index):
 		super(TemporalGCN, self).__init__()
-		self.input_size = sequence_length*2 + (homog_size * num_homog)
+		self.input_size = sequence_length*3
 		self.edge_index = edge_index
 		self.gcn1 = GCNConv(self.input_size, hidden_dim)
 		self.gcn2 = GCNConv(hidden_dim, hidden_dim)
@@ -94,8 +94,7 @@ class EncoderCNN(nn.Module):
 		return combined_features
 
 class DecoderRNN(nn.Module):
-	def __init__(self, embed_size, hidden_size, sequence_length, num_layers, temporal_gcn, use_homog=True, use_pose2=True, output_size=75,
-				 num_homog=15, homog_size=9, pose2_size=75):
+	def __init__(self, embed_size, hidden_size, sequence_length, num_layers, temporal_gcn, use_homog=True, use_pose2=True, output_size=75):
 		super(DecoderRNN, self).__init__()
 		# self.embed = nn.Embedding(vocab_size, embed_size)
 		self.use_homog = use_homog
@@ -105,30 +104,24 @@ class DecoderRNN(nn.Module):
 		self.lstm_input_size = sequence_length*2
 		self.lstm = nn.LSTM(self.lstm_input_size, hidden_size, num_layers, batch_first=True)
 		self.linear = nn.Linear(hidden_size, (output_size))
-		# self.embed_size = embed_size
-		self.num_homog = num_homog
-		self.homog_size = homog_size
-		self.pose2_size = pose2_size
 		self.output_size = output_size
 		self.sequence_length = sequence_length
 		self.temporal_gcn = temporal_gcn
 
-	def forward(self, features, lengths, homography=None, poses2=None):
+	def forward(self, features, lengths, mhi):
 		"""Decode image feature vectors and generate pose sequences."""
 		device = features.device
-		if self.use_homog and self.use_pose2:
-			print(type(homography))
-			homography = homography.to(device)
-			poses2 = poses2.to(device)
-			embeddings = torch.cat((features, homography), dim=-1)
-			print("Embeddings shape", embeddings.shape)
+		mhi = mhi.to(device)
+		print("Feature shape", features.shape)
+		print("MHI shape", mhi.shape)
+		embeddings = torch.cat((features, mhi), dim=-1)
+		print("Embeddings shape", embeddings.shape)
 		gcn_outputs = self.temporal_gcn(embeddings)
 		packed = pack_padded_sequence(gcn_outputs, lengths, batch_first=True)
 		hiddens, _ = self.lstm(packed)
 		final_outputs = self.linear(hiddens[0])
 		print("Output shape", final_outputs.shape)
 		return final_outputs
-
 	def sample(self, features, homography, openpose, states=None):
 		sampled_ids = []
 		embeddings = torch.zeros([1, 1, self.output_size]).cuda().float()
