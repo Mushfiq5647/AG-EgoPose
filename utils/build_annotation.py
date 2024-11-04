@@ -19,9 +19,9 @@ class Annotation(object):
 		anns.append((path, range))
 
 
-def build_annotation():
+def build_annotation(dataset):
 	annotation = Annotation()
-	categories = {"patty1": 1957,
+	kinect_categories = {"patty1": 1957,
 				  "patty2": 1799,
 				  "patty5": 2006,
 				  "patty26": 2304,
@@ -39,18 +39,31 @@ def build_annotation():
 				  "sport56": 2934,
 				  "sport58": 4913}
 
+	cmu_categories = {"1-catch1": 3477,
+				  "2-catch2": 3477,
+				  "4-convo1": 2594,
+				  "5-convo2": 2736,
+				  "6-convo3": 2751,
+				  "10-hand1": 2738,
+				  "13-sports1": 2334}
+
+	if dataset == 'cmu':
+		categories = cmu_categories
+	else:
+		categories = kinect_categories
+
 	for cat in categories:
 		count = 0
 		count = categories[cat]
 		while (count - 512) > 0:
 			annotation.anns.append((cat, count))
 			count -= 32
-		annotation.anns.append((cat, 513))
+		annotation.anns.append((cat, 257))
 	return annotation
 
 
 def main(args):
-	anns = build_annotation()
+	anns = build_annotation(args.dataset)
 	print ("num sequences:", len(anns))
 	annotation_path = args.annotation_path
 	with open(annotation_path, 'wb') as f:
@@ -71,5 +84,6 @@ def main(args):
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--annotation_path', type=str, required=True, help='path to base dir for all captures')
+	parser.add_argument('--dataset', type=str, required=True, help='kinect or cmu')
 	args = parser.parse_args()
 	main(args)

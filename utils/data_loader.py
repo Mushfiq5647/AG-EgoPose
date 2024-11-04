@@ -2,6 +2,7 @@
 import json
 import os
 import torch
+import json
 import torch.utils.data as data
 from PIL import Image
 
@@ -40,12 +41,9 @@ class PoseDataset(data.Dataset):
 			poses2.append(pose2)
 		images = torch.stack(images)
 		target_egoposes = torch.Tensor(gt_egoposes)
-		with open('sample_targets.txt', 'a') as f:
-			f.write(f'{target_egoposes}\n')
-		if homography is not None and all(h is not None for h in homography):
-			homography = [list(h) for h in homography]
-			homography = torch.Tensor(homography)
-			poses2 = torch.Tensor(poses2)
+		homography = [list(h) for h in homography]
+		homography = torch.Tensor(homography)
+		poses2 = torch.Tensor(poses2)
 		return images, target_egoposes, homography, poses2
 
 	def __len__(self):
@@ -58,13 +56,12 @@ def collate_fn(data):
 	images = torch.stack(images, 0)
 	lengths = [len(pose) for pose in target_egoposes]
 	max_length = max(lengths)
-	targets = torch.zeros(len(target_egoposes), max_length, 75)
+	targets = torch.zeros(len(target_egoposes), max_length, 57)
 	for i, pose in enumerate(target_egoposes):
 		end = lengths[i]
 		targets[i, :end, :] = pose[:end]
-	if isinstance(homography[0], torch.Tensor) and isinstance(poses2[0], torch.Tensor):
-		homography = torch.stack(homography, 0)
-		poses2 = torch.stack(poses2, 0)
+	homography = torch.stack(homography, 0)
+	poses2 = torch.stack(poses2, 0)
 	return images, targets, homography, poses2, lengths
 
 def getPair(imroot, hroot, oproot, path, index, test_mode):
@@ -81,22 +78,36 @@ def getPair(imroot, hroot, oproot, path, index, test_mode):
 			js = json.loads(f.read())
 			if 'people' not in js or len(js['people']) == 0:
 				# No people detected, handle missing data
-				pose2 = [0] * 75
+				pose2 = [0] * 50
 			else:
 				pose_keypoints = js['people'][0].get('pose_keypoints_2d', [])
 
 				if len(pose_keypoints) == 0:
 					# If no keypoints are found, set to a default value
-					pose2 = [0] * 75
+					pose2 = [0] * 50
 				else:
 					pose2 = pose_keypoints
-	else:
-		h = None
-		pose2 = None
+					pose2 = [pose2[i] for i in range(len(pose2)) if (i + 1) % 3 != 0]
 
-	egopose_file = imroot + "/" + path + "/synchronized/gt-egopose/p" + str(index) + ".txt"
-	with open(egopose_file, 'r') as f:
-		egopose_gt = list(map(float, f.read().split()))
+		with open(imroot + "/" + path + "/synchronized/gt-skeletons/body3DScene_" + str(index) + ".json", 'r') as f:
+			js = json.load(f)
+
+			# Check if "bodies" exists and is not empty
+			if 'bodies' not in js or len(js['bodies']) == 0:
+				# No bodies detected, handle missing data
+				egopose_gt = [0] * 57  # 19 joints * 3 coordinates
+			else:
+				# Find the body with "id" == 0
+				body_id_0 = next((body for body in js['bodies'] if body['id'] == 0), None)
+
+				if body_id_0 is None or 'joints19' not in body_id_0:
+					# If "id" 0 is not found or no "joints19" data, set to default
+					egopose_gt = [0] * 57
+				else:
+					# Extract 3D coordinates only (skip confidence score)
+					joints19 = body_id_0['joints19']
+					egopose_gt = [joints19[i] for i in range(len(joints19)) if (i + 1) % 4 != 0]
+
 
 	path = path + "/synchronized/frames/imxx" + str(index) + ".jpg"
 	image = Image.open(os.path.join(imroot, path)).convert('RGB')

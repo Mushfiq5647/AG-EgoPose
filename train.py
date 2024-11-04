@@ -98,11 +98,11 @@ if __name__ == '__main__':
     parser.add_argument('--upp', action='store_true', help='set flag if training upper body model')
     parser.add_argument('--low', action='store_true', help='set flag if training lower body model')
 
-    parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect',
+    parser.add_argument('--image_dir', type=str, default='you2me_ds_release_cmu/cmu',
                         help='directory for resized images')
-    parser.add_argument('--h_dir', type=str, default='you2me_ds_release_kinect/kinect',
+    parser.add_argument('--h_dir', type=str, default='you2me_ds_release_cmu/cmu',
                         help='directory for resized images')
-    parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect',
+    parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_cmu/cmu',
                         help='directory for resized images')
 
     parser.add_argument('--embed_size', type=int, default=256, help='dimension of word embedding vectors')
