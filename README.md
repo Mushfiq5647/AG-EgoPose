@@ -42,7 +42,7 @@ for your each of your training sequences.
 
 Then run the following command:
 
-`python train.py --model_path ./utils/model.py --annotation_path ./vocab/train_annotation.pkl --validation_annotation_path ./vocab/validation_annotation.pkl`
+`python train.py --model_path ./utils/model.py --annotation_path ./vocab/train_annotation.pkl`
 
 
 For testing:

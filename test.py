@@ -48,8 +48,8 @@ def mean_per_joint_position_error(predicted, target):
     print(f"Predicted shape: {predicted.shape}")
     print(f"Target shape: {target.shape}")
 
-    predicted = predicted.view(predicted.size(0), 25, 3)
-    target = target.view(target.size(0), 25, 3)
+    predicted = predicted.view(predicted.size(0), 19, 3)
+    target = target.view(target.size(0), 19, 3)
 
     # Compute the Euclidean distance (L2 norm) between predicted and target for each joint
     error = torch.norm(predicted - target, dim=-1)  # L2 norm along the last dimension (x, y, z)
@@ -82,9 +82,7 @@ def main(args):
     temporal_gcn = TemporalGCN(
         args.hidden_size,
         args.seq_length,
-        edge_index,
-        output_dim=75,
-        kernel_size=7).to(device)
+        edge_index).to(device)
 
     decoder = DecoderRNN(args.embed_size,
                          args.hidden_size,
@@ -110,7 +108,7 @@ def main(args):
             outputs = decoder(features, lengths, homography, poses2)
             print("Outputs:", outputs.shape)
             print("Targets:", targets.shape)
-            outputs = outputs.view(-1, 75)
+            outputs = outputs.view(-1, 57)
 
             # Calculate MPJPE
             mpjpe = mean_per_joint_position_error(outputs, targets)
@@ -133,9 +131,9 @@ if __name__ == '__main__':
     parser.add_argument('--test_annotation_path', type=str, required=True, help='path for annotation wrapper')
 
     # Directories
-    parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for resized images')
-    parser.add_argument('--h_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for homography')
-    parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for OpenPose JSON files')
+    parser.add_argument('--image_dir', type=str, default='you2me_ds_release_cmu (1)/cmu', help='directory for resized images')
+    parser.add_argument('--h_dir', type=str, default='you2me_ds_release_cmu (1)/cmu', help='directory for homography')
+    parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_cmu (1)/cmu', help='directory for OpenPose JSON files')
 
     # Model parameters
     parser.add_argument('--embed_size', type=int, default=256, help='dimension of word embedding vectors')

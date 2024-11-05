@@ -11,11 +11,10 @@ from torch.nn.utils.rnn import pack_padded_sequence
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 class TemporalGCN(nn.Module):
-	def __init__(self, hidden_dim, sequence_length, edge_index, output_dim=75, kernel_size=9, num_homog=15, homog_size=9):
+	def __init__(self, hidden_dim, sequence_length, edge_index, output_dim=57, num_homog=15, homog_size=9, pose2_size=50):
 		super(TemporalGCN, self).__init__()
-
 		# GCN Layers (for spatial dependencies)
-		self.input_size = sequence_length + (homog_size * num_homog) + output_dim
+		self.input_size = sequence_length + (homog_size * num_homog) + pose2_size
 		self.gcn1 = GCNConv(self.input_size, hidden_dim)
 		self.gcn2 = GCNConv(hidden_dim, hidden_dim)
 		self.edge_index = edge_index
@@ -89,8 +88,8 @@ class EncoderCNN(nn.Module):
 		return feat_block
 
 class DecoderRNN(nn.Module):
-	def __init__(self, embed_size, hidden_size, sequence_length, num_layers, temporal_gcn, use_homog=True, use_pose2=True, output_size=75,
-				 num_homog=15, homog_size=9, pose2_size=75):
+	def __init__(self, embed_size, hidden_size, sequence_length, num_layers, temporal_gcn, use_homog=True, use_pose2=True, output_size=57,
+				 num_homog=15, homog_size=9, pose2_size=50):
 		super(DecoderRNN, self).__init__()
 		# self.embed = nn.Embedding(vocab_size, embed_size)
 		self.use_homog = use_homog
@@ -111,12 +110,10 @@ class DecoderRNN(nn.Module):
 	def forward(self, features, lengths, homography=None, poses2=None):
 		"""Decode image feature vectors and generate pose sequences."""
 		device = features.device
-		if self.use_homog and self.use_pose2:
-			print(type(homography))
-			homography = homography.to(device)
-			poses2 = poses2.to(device)
-			embeddings = torch.cat((features, homography, poses2), dim=-1)
-			print("Embeddings shape", embeddings.shape)
+		homography = homography.to(device)
+		poses2 = poses2.to(device)
+		embeddings = torch.cat((features, homography, poses2), dim=-1)
+		print("Embeddings shape", embeddings.shape)
 		gcn_outputs = self.temporal_gcn(embeddings)
 		print("GCN outputs shape", gcn_outputs.shape)
 		packed = pack_padded_sequence(gcn_outputs, lengths, batch_first=True)
