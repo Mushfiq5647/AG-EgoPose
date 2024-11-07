@@ -5,6 +5,7 @@ import torch
 import json
 import torch.utils.data as data
 from PIL import Image
+import numpy as np
 
 
 class PoseDataset(data.Dataset):
@@ -107,11 +108,13 @@ def getPair(imroot, hroot, oproot, path, index, test_mode):
 					# Extract 3D coordinates only (skip confidence score)
 					joints19 = body_id_0['joints19']
 					egopose_gt = [joints19[i] for i in range(len(joints19)) if (i + 1) % 4 != 0]
-
+					egopose_gt_scaled = [round(x / 1000.0, 4) for x in egopose_gt]
+					with open('sample_pose.txt', 'w') as f:
+						f.write(str(egopose_gt_scaled))
 
 	path = path + "/synchronized/frames/imxx" + str(index) + ".jpg"
 	image = Image.open(os.path.join(imroot, path)).convert('RGB')
-	return image, egopose_gt, h, pose2
+	return image, egopose_gt_scaled, h, pose2
 
 def get_loader(annotation, imroot, hroot, oproot, transform, batch_size, shuffle, num_workers, seq_length, test_mode = False):
 	""" Returns torch.utils.data.DataLoader for custom pose dataset. """

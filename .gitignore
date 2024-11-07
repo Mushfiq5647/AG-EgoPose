@@ -3,9 +3,7 @@ actionformer/config/
 actionformer/epoch_014.pth.tar
 actionformer/epoch_015.pth.tar
 actionformer/epoch_035.pth.tar
-utils/kinect_trained_ckpt_actionformer
-utils/kinect_trained_ckpt_final
-utils/kinect_trained_ckpt_baseyou2me
+utils/cmu_trained_ckpt_baseyou2me
 utils/train_upp
 you2me_ds_release_cmu/
 you2me_ds_release_kinect/
