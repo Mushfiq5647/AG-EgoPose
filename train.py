@@ -96,7 +96,7 @@ def main(args):
 	print("Total dataset", len(data_loader.dataset))
 	encoder = EncoderCNN(args.embed_size, actionformer_feature_extractor).to(device)
 
-	model_dir = os.path.abspath('./utils/kinect_trained_ckpt_you2megcn')
+	model_dir = os.path.abspath('utils/cmu_trained_ckpt_you2me_actionformer')
 	temporal_gcn = TemporalGCN(
 						 args.hidden_size,
 						 args.seq_length,
@@ -124,7 +124,8 @@ def main(args):
 			# Squeeze the targets to make them 1D
 			targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
 			features = encoder(images)
-			outputs = decoder(features, lengths, homography, poses2)
+			print("Feature shape:", features.shape)
+			outputs = decoder(features, lengths, homography)
 			loss = criterion(outputs, targets)
 			if torch.isnan(loss):
 				print(f"NaN detected! Epoch: {epoch}, Iteration: {i}")

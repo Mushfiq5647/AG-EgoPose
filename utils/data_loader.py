@@ -30,7 +30,6 @@ class PoseDataset(data.Dataset):
 		poses = []
 		poses2 = []
 		homography = []
-		print('Path',path)
 		for i in range(end-self.seq_length, end):
 			# print("Image Count", i, end)
 			image, gt_egopose, h, pose2 = getPair(imroot, hroot, oproot, path, i, test_mode)
@@ -45,15 +44,12 @@ class PoseDataset(data.Dataset):
 		homography = [list(h) for h in homography]
 		homography = torch.Tensor(homography)
 		poses2 = torch.Tensor(poses2)
-		print("Homography", homography.shape)
 		return images, target_egoposes, homography, poses2
 
 	def __len__(self):
 		return len(self.annotation)
 
 def collate_fn(data):
-	""" Creates mini-batch tensors from the list of tuples (images, poses) """
-	print("In collate_fn")
 	data.sort(key=lambda x: len(x[1]), reverse=True)
 	images, target_egoposes, homography, poses2 = zip(*data)
 	images = torch.stack(images, 0)
