@@ -5,10 +5,14 @@ actionformer/epoch_015.pth.tar
 actionformer/epoch_035.pth.tar
 utils/kinect_trained_ckpt_you2megcn
 utils/kinect_trained_ckpt_final
+utils/cmu_trained_ckpt_you2me_actionformer/
+utils/cmu_trained_ckpt_you2me_final
 you2me_ds_release_cmu (1)/
 you2me_ds_release_kinect/
 annotations.json
 test_annotations.json
+homography.py
+testing.py
 # Ignore Python cache files
 __pycache__/
 .idea/
