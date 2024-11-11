@@ -1,323 +1,1275 @@
 {
     "annotations": [
         [
-            "3-catch3",
-            3395
+            "ayush/kitchen2",
+            2100
         ],
         [
-            "3-catch3",
-            3139
+            "ayush/kitchen2",
+            1844
         ],
         [
-            "3-catch3",
-            2883
+            "ayush/kitchen2",
+            1588
         ],
         [
-            "3-catch3",
-            2627
+            "ayush/kitchen2",
+            1332
         ],
         [
-            "3-catch3",
-            2371
+            "ayush/kitchen2",
+            1076
         ],
         [
-            "3-catch3",
-            2115
+            "ayush/kitchen2",
+            820
         ],
         [
-            "3-catch3",
-            1859
+            "ayush/kitchen2",
+            564
         ],
         [
-            "3-catch3",
-            1603
+            "ayush/kitchen2",
+            308
         ],
         [
-            "3-catch3",
-            1347
-        ],
-        [
-            "3-catch3",
-            1091
-        ],
-        [
-            "3-catch3",
-            835
-        ],
-        [
-            "3-catch3",
-            579
-        ],
-        [
-            "3-catch3",
-            323
-        ],
-        [
-            "3-catch3",
+            "ayush/kitchen2",
             257
         ],
         [
-            "7-convo4",
-            2767
+            "ayush/out",
+            3500
         ],
         [
-            "7-convo4",
-            2511
+            "ayush/out",
+            3244
         ],
         [
-            "7-convo4",
-            2255
+            "ayush/out",
+            2988
         ],
         [
-            "7-convo4",
-            1999
+            "ayush/out",
+            2732
         ],
         [
-            "7-convo4",
-            1743
+            "ayush/out",
+            2476
         ],
         [
-            "7-convo4",
-            1487
+            "ayush/out",
+            2220
         ],
         [
-            "7-convo4",
-            1231
+            "ayush/out",
+            1964
         ],
         [
-            "7-convo4",
-            975
+            "ayush/out",
+            1708
         ],
         [
-            "7-convo4",
-            719
+            "ayush/out",
+            1452
         ],
         [
-            "7-convo4",
-            463
+            "ayush/out",
+            1196
         ],
         [
-            "7-convo4",
+            "ayush/out",
+            940
+        ],
+        [
+            "ayush/out",
+            684
+        ],
+        [
+            "ayush/out",
+            428
+        ],
+        [
+            "ayush/out",
             257
         ],
         [
-            "8-convo5",
-            2736
+            "ayush_new/kitchen1",
+            3200
         ],
         [
-            "8-convo5",
-            2480
+            "ayush_new/kitchen1",
+            2944
         ],
         [
-            "8-convo5",
-            2224
+            "ayush_new/kitchen1",
+            2688
         ],
         [
-            "8-convo5",
-            1968
+            "ayush_new/kitchen1",
+            2432
         ],
         [
-            "8-convo5",
-            1712
+            "ayush_new/kitchen1",
+            2176
         ],
         [
-            "8-convo5",
-            1456
+            "ayush_new/kitchen1",
+            1920
         ],
         [
-            "8-convo5",
+            "ayush_new/kitchen1",
+            1664
+        ],
+        [
+            "ayush_new/kitchen1",
+            1408
+        ],
+        [
+            "ayush_new/kitchen1",
+            1152
+        ],
+        [
+            "ayush_new/kitchen1",
+            896
+        ],
+        [
+            "ayush_new/kitchen1",
+            640
+        ],
+        [
+            "ayush_new/kitchen1",
+            384
+        ],
+        [
+            "ayush_new/kitchen1",
+            257
+        ],
+        [
+            "ayush_new/office1",
+            3300
+        ],
+        [
+            "ayush_new/office1",
+            3044
+        ],
+        [
+            "ayush_new/office1",
+            2788
+        ],
+        [
+            "ayush_new/office1",
+            2532
+        ],
+        [
+            "ayush_new/office1",
+            2276
+        ],
+        [
+            "ayush_new/office1",
+            2020
+        ],
+        [
+            "ayush_new/office1",
+            1764
+        ],
+        [
+            "ayush_new/office1",
+            1508
+        ],
+        [
+            "ayush_new/office1",
+            1252
+        ],
+        [
+            "ayush_new/office1",
+            996
+        ],
+        [
+            "ayush_new/office1",
+            740
+        ],
+        [
+            "ayush_new/office1",
+            484
+        ],
+        [
+            "ayush_new/office1",
+            257
+        ],
+        [
+            "ayush_new/office2",
+            2900
+        ],
+        [
+            "ayush_new/office2",
+            2644
+        ],
+        [
+            "ayush_new/office2",
+            2388
+        ],
+        [
+            "ayush_new/office2",
+            2132
+        ],
+        [
+            "ayush_new/office2",
+            1876
+        ],
+        [
+            "ayush_new/office2",
+            1620
+        ],
+        [
+            "ayush_new/office2",
+            1364
+        ],
+        [
+            "ayush_new/office2",
+            1108
+        ],
+        [
+            "ayush_new/office2",
+            852
+        ],
+        [
+            "ayush_new/office2",
+            596
+        ],
+        [
+            "ayush_new/office2",
+            340
+        ],
+        [
+            "ayush_new/office2",
+            257
+        ],
+        [
+            "kripa/kitchen",
+            1500
+        ],
+        [
+            "kripa/kitchen",
+            1244
+        ],
+        [
+            "kripa/kitchen",
+            988
+        ],
+        [
+            "kripa/kitchen",
+            732
+        ],
+        [
+            "kripa/kitchen",
+            476
+        ],
+        [
+            "kripa/kitchen",
+            257
+        ],
+        [
+            "kripa/office1",
+            4700
+        ],
+        [
+            "kripa/office1",
+            4444
+        ],
+        [
+            "kripa/office1",
+            4188
+        ],
+        [
+            "kripa/office1",
+            3932
+        ],
+        [
+            "kripa/office1",
+            3676
+        ],
+        [
+            "kripa/office1",
+            3420
+        ],
+        [
+            "kripa/office1",
+            3164
+        ],
+        [
+            "kripa/office1",
+            2908
+        ],
+        [
+            "kripa/office1",
+            2652
+        ],
+        [
+            "kripa/office1",
+            2396
+        ],
+        [
+            "kripa/office1",
+            2140
+        ],
+        [
+            "kripa/office1",
+            1884
+        ],
+        [
+            "kripa/office1",
+            1628
+        ],
+        [
+            "kripa/office1",
+            1372
+        ],
+        [
+            "kripa/office1",
+            1116
+        ],
+        [
+            "kripa/office1",
+            860
+        ],
+        [
+            "kripa/office1",
+            604
+        ],
+        [
+            "kripa/office1",
+            348
+        ],
+        [
+            "kripa/office1",
+            257
+        ],
+        [
+            "kripa/office2",
+            3200
+        ],
+        [
+            "kripa/office2",
+            2944
+        ],
+        [
+            "kripa/office2",
+            2688
+        ],
+        [
+            "kripa/office2",
+            2432
+        ],
+        [
+            "kripa/office2",
+            2176
+        ],
+        [
+            "kripa/office2",
+            1920
+        ],
+        [
+            "kripa/office2",
+            1664
+        ],
+        [
+            "kripa/office2",
+            1408
+        ],
+        [
+            "kripa/office2",
+            1152
+        ],
+        [
+            "kripa/office2",
+            896
+        ],
+        [
+            "kripa/office2",
+            640
+        ],
+        [
+            "kripa/office2",
+            384
+        ],
+        [
+            "kripa/office2",
+            257
+        ],
+        [
+            "kripa/out",
+            2200
+        ],
+        [
+            "kripa/out",
+            1944
+        ],
+        [
+            "kripa/out",
+            1688
+        ],
+        [
+            "kripa/out",
+            1432
+        ],
+        [
+            "kripa/out",
+            1176
+        ],
+        [
+            "kripa/out",
+            920
+        ],
+        [
+            "kripa/out",
+            664
+        ],
+        [
+            "kripa/out",
+            408
+        ],
+        [
+            "kripa/out",
+            257
+        ],
+        [
+            "kripa/rountunda",
+            2100
+        ],
+        [
+            "kripa/rountunda",
+            1844
+        ],
+        [
+            "kripa/rountunda",
+            1588
+        ],
+        [
+            "kripa/rountunda",
+            1332
+        ],
+        [
+            "kripa/rountunda",
+            1076
+        ],
+        [
+            "kripa/rountunda",
+            820
+        ],
+        [
+            "kripa/rountunda",
+            564
+        ],
+        [
+            "kripa/rountunda",
+            308
+        ],
+        [
+            "kripa/rountunda",
+            257
+        ],
+        [
+            "kripa_new/kitchen1",
+            2300
+        ],
+        [
+            "kripa_new/kitchen1",
+            2044
+        ],
+        [
+            "kripa_new/kitchen1",
+            1788
+        ],
+        [
+            "kripa_new/kitchen1",
+            1532
+        ],
+        [
+            "kripa_new/kitchen1",
+            1276
+        ],
+        [
+            "kripa_new/kitchen1",
+            1020
+        ],
+        [
+            "kripa_new/kitchen1",
+            764
+        ],
+        [
+            "kripa_new/kitchen1",
+            508
+        ],
+        [
+            "kripa_new/kitchen1",
+            257
+        ],
+        [
+            "kripa_new/kitchen2",
+            1500
+        ],
+        [
+            "kripa_new/kitchen2",
+            1244
+        ],
+        [
+            "kripa_new/kitchen2",
+            988
+        ],
+        [
+            "kripa_new/kitchen2",
+            732
+        ],
+        [
+            "kripa_new/kitchen2",
+            476
+        ],
+        [
+            "kripa_new/kitchen2",
+            257
+        ],
+        [
+            "kripa_new/office1",
+            2600
+        ],
+        [
+            "kripa_new/office1",
+            2344
+        ],
+        [
+            "kripa_new/office1",
+            2088
+        ],
+        [
+            "kripa_new/office1",
+            1832
+        ],
+        [
+            "kripa_new/office1",
+            1576
+        ],
+        [
+            "kripa_new/office1",
+            1320
+        ],
+        [
+            "kripa_new/office1",
+            1064
+        ],
+        [
+            "kripa_new/office1",
+            808
+        ],
+        [
+            "kripa_new/office1",
+            552
+        ],
+        [
+            "kripa_new/office1",
+            296
+        ],
+        [
+            "kripa_new/office1",
+            257
+        ],
+        [
+            "kripa_new/office2",
+            2300
+        ],
+        [
+            "kripa_new/office2",
+            2044
+        ],
+        [
+            "kripa_new/office2",
+            1788
+        ],
+        [
+            "kripa_new/office2",
+            1532
+        ],
+        [
+            "kripa_new/office2",
+            1276
+        ],
+        [
+            "kripa_new/office2",
+            1020
+        ],
+        [
+            "kripa_new/office2",
+            764
+        ],
+        [
+            "kripa_new/office2",
+            508
+        ],
+        [
+            "kripa_new/office2",
+            257
+        ],
+        [
+            "kripa_new/out",
+            2400
+        ],
+        [
+            "kripa_new/out",
+            2144
+        ],
+        [
+            "kripa_new/out",
+            1888
+        ],
+        [
+            "kripa_new/out",
+            1632
+        ],
+        [
+            "kripa_new/out",
+            1376
+        ],
+        [
+            "kripa_new/out",
+            1120
+        ],
+        [
+            "kripa_new/out",
+            864
+        ],
+        [
+            "kripa_new/out",
+            608
+        ],
+        [
+            "kripa_new/out",
+            352
+        ],
+        [
+            "kripa_new/out",
+            257
+        ],
+        [
+            "kripa_new/rountunda2",
+            1900
+        ],
+        [
+            "kripa_new/rountunda2",
+            1644
+        ],
+        [
+            "kripa_new/rountunda2",
+            1388
+        ],
+        [
+            "kripa_new/rountunda2",
+            1132
+        ],
+        [
+            "kripa_new/rountunda2",
+            876
+        ],
+        [
+            "kripa_new/rountunda2",
+            620
+        ],
+        [
+            "kripa_new/rountunda2",
+            364
+        ],
+        [
+            "kripa_new/rountunda2",
+            257
+        ],
+        [
+            "kripa_new/rountunda3",
             1200
         ],
         [
-            "8-convo5",
+            "kripa_new/rountunda3",
             944
         ],
         [
-            "8-convo5",
+            "kripa_new/rountunda3",
             688
         ],
         [
-            "8-convo5",
+            "kripa_new/rountunda3",
             432
         ],
         [
-            "8-convo5",
+            "kripa_new/rountunda3",
             257
         ],
         [
-            "9-convo6",
-            2753
+            "kripa_new/rountunda4",
+            900
         ],
         [
-            "9-convo6",
-            2497
+            "kripa_new/rountunda4",
+            644
         ],
         [
-            "9-convo6",
-            2241
+            "kripa_new/rountunda4",
+            388
         ],
         [
-            "9-convo6",
-            1985
-        ],
-        [
-            "9-convo6",
-            1729
-        ],
-        [
-            "9-convo6",
-            1473
-        ],
-        [
-            "9-convo6",
-            1217
-        ],
-        [
-            "9-convo6",
-            961
-        ],
-        [
-            "9-convo6",
-            705
-        ],
-        [
-            "9-convo6",
-            449
-        ],
-        [
-            "9-convo6",
+            "kripa_new/rountunda4",
             257
         ],
         [
-            "11-hand2",
-            3453
+            "lingjie_new/kitchen1",
+            4200
         ],
         [
-            "11-hand2",
-            3197
+            "lingjie_new/kitchen1",
+            3944
         ],
         [
-            "11-hand2",
-            2941
+            "lingjie_new/kitchen1",
+            3688
         ],
         [
-            "11-hand2",
-            2685
+            "lingjie_new/kitchen1",
+            3432
         ],
         [
-            "11-hand2",
-            2429
+            "lingjie_new/kitchen1",
+            3176
         ],
         [
-            "11-hand2",
-            2173
+            "lingjie_new/kitchen1",
+            2920
         ],
         [
-            "11-hand2",
-            1917
+            "lingjie_new/kitchen1",
+            2664
         ],
         [
-            "11-hand2",
-            1661
+            "lingjie_new/kitchen1",
+            2408
         ],
         [
-            "11-hand2",
-            1405
+            "lingjie_new/kitchen1",
+            2152
         ],
         [
-            "11-hand2",
-            1149
+            "lingjie_new/kitchen1",
+            1896
         ],
         [
-            "11-hand2",
-            893
+            "lingjie_new/kitchen1",
+            1640
         ],
         [
-            "11-hand2",
-            637
+            "lingjie_new/kitchen1",
+            1384
         ],
         [
-            "11-hand2",
-            381
+            "lingjie_new/kitchen1",
+            1128
         ],
         [
-            "11-hand2",
+            "lingjie_new/kitchen1",
+            872
+        ],
+        [
+            "lingjie_new/kitchen1",
+            616
+        ],
+        [
+            "lingjie_new/kitchen1",
+            360
+        ],
+        [
+            "lingjie_new/kitchen1",
             257
         ],
         [
-            "12-hand3",
-            2454
+            "lingjie_new/kitchen2",
+            3700
         ],
         [
-            "12-hand3",
-            2198
+            "lingjie_new/kitchen2",
+            3444
         ],
         [
-            "12-hand3",
-            1942
+            "lingjie_new/kitchen2",
+            3188
         ],
         [
-            "12-hand3",
-            1686
+            "lingjie_new/kitchen2",
+            2932
         ],
         [
-            "12-hand3",
-            1430
+            "lingjie_new/kitchen2",
+            2676
         ],
         [
-            "12-hand3",
-            1174
+            "lingjie_new/kitchen2",
+            2420
         ],
         [
-            "12-hand3",
-            918
+            "lingjie_new/kitchen2",
+            2164
         ],
         [
-            "12-hand3",
-            662
+            "lingjie_new/kitchen2",
+            1908
         ],
         [
-            "12-hand3",
-            406
+            "lingjie_new/kitchen2",
+            1652
         ],
         [
-            "12-hand3",
+            "lingjie_new/kitchen2",
+            1396
+        ],
+        [
+            "lingjie_new/kitchen2",
+            1140
+        ],
+        [
+            "lingjie_new/kitchen2",
+            884
+        ],
+        [
+            "lingjie_new/kitchen2",
+            628
+        ],
+        [
+            "lingjie_new/kitchen2",
+            372
+        ],
+        [
+            "lingjie_new/kitchen2",
             257
         ],
         [
-            "14-sports2",
-            2133
+            "lingjie_new/office1",
+            3900
         ],
         [
-            "14-sports2",
-            1877
+            "lingjie_new/office1",
+            3644
         ],
         [
-            "14-sports2",
-            1621
+            "lingjie_new/office1",
+            3388
         ],
         [
-            "14-sports2",
-            1365
+            "lingjie_new/office1",
+            3132
         ],
         [
-            "14-sports2",
-            1109
+            "lingjie_new/office1",
+            2876
         ],
         [
-            "14-sports2",
-            853
+            "lingjie_new/office1",
+            2620
         ],
         [
-            "14-sports2",
-            597
+            "lingjie_new/office1",
+            2364
         ],
         [
-            "14-sports2",
-            341
+            "lingjie_new/office1",
+            2108
         ],
         [
-            "14-sports2",
+            "lingjie_new/office1",
+            1852
+        ],
+        [
+            "lingjie_new/office1",
+            1596
+        ],
+        [
+            "lingjie_new/office1",
+            1340
+        ],
+        [
+            "lingjie_new/office1",
+            1084
+        ],
+        [
+            "lingjie_new/office1",
+            828
+        ],
+        [
+            "lingjie_new/office1",
+            572
+        ],
+        [
+            "lingjie_new/office1",
+            316
+        ],
+        [
+            "lingjie_new/office1",
+            257
+        ],
+        [
+            "lingjie_new/office2",
+            4000
+        ],
+        [
+            "lingjie_new/office2",
+            3744
+        ],
+        [
+            "lingjie_new/office2",
+            3488
+        ],
+        [
+            "lingjie_new/office2",
+            3232
+        ],
+        [
+            "lingjie_new/office2",
+            2976
+        ],
+        [
+            "lingjie_new/office2",
+            2720
+        ],
+        [
+            "lingjie_new/office2",
+            2464
+        ],
+        [
+            "lingjie_new/office2",
+            2208
+        ],
+        [
+            "lingjie_new/office2",
+            1952
+        ],
+        [
+            "lingjie_new/office2",
+            1696
+        ],
+        [
+            "lingjie_new/office2",
+            1440
+        ],
+        [
+            "lingjie_new/office2",
+            1184
+        ],
+        [
+            "lingjie_new/office2",
+            928
+        ],
+        [
+            "lingjie_new/office2",
+            672
+        ],
+        [
+            "lingjie_new/office2",
+            416
+        ],
+        [
+            "lingjie_new/office2",
+            257
+        ],
+        [
+            "lingjie_new/out1",
+            4400
+        ],
+        [
+            "lingjie_new/out1",
+            4144
+        ],
+        [
+            "lingjie_new/out1",
+            3888
+        ],
+        [
+            "lingjie_new/out1",
+            3632
+        ],
+        [
+            "lingjie_new/out1",
+            3376
+        ],
+        [
+            "lingjie_new/out1",
+            3120
+        ],
+        [
+            "lingjie_new/out1",
+            2864
+        ],
+        [
+            "lingjie_new/out1",
+            2608
+        ],
+        [
+            "lingjie_new/out1",
+            2352
+        ],
+        [
+            "lingjie_new/out1",
+            2096
+        ],
+        [
+            "lingjie_new/out1",
+            1840
+        ],
+        [
+            "lingjie_new/out1",
+            1584
+        ],
+        [
+            "lingjie_new/out1",
+            1328
+        ],
+        [
+            "lingjie_new/out1",
+            1072
+        ],
+        [
+            "lingjie_new/out1",
+            816
+        ],
+        [
+            "lingjie_new/out1",
+            560
+        ],
+        [
+            "lingjie_new/out1",
+            304
+        ],
+        [
+            "lingjie_new/out1",
+            257
+        ],
+        [
+            "lingjie_new/out2",
+            3900
+        ],
+        [
+            "lingjie_new/out2",
+            3644
+        ],
+        [
+            "lingjie_new/out2",
+            3388
+        ],
+        [
+            "lingjie_new/out2",
+            3132
+        ],
+        [
+            "lingjie_new/out2",
+            2876
+        ],
+        [
+            "lingjie_new/out2",
+            2620
+        ],
+        [
+            "lingjie_new/out2",
+            2364
+        ],
+        [
+            "lingjie_new/out2",
+            2108
+        ],
+        [
+            "lingjie_new/out2",
+            1852
+        ],
+        [
+            "lingjie_new/out2",
+            1596
+        ],
+        [
+            "lingjie_new/out2",
+            1340
+        ],
+        [
+            "lingjie_new/out2",
+            1084
+        ],
+        [
+            "lingjie_new/out2",
+            828
+        ],
+        [
+            "lingjie_new/out2",
+            572
+        ],
+        [
+            "lingjie_new/out2",
+            316
+        ],
+        [
+            "lingjie_new/out2",
+            257
+        ],
+        [
+            "lingjie_new/rest1",
+            3200
+        ],
+        [
+            "lingjie_new/rest1",
+            2944
+        ],
+        [
+            "lingjie_new/rest1",
+            2688
+        ],
+        [
+            "lingjie_new/rest1",
+            2432
+        ],
+        [
+            "lingjie_new/rest1",
+            2176
+        ],
+        [
+            "lingjie_new/rest1",
+            1920
+        ],
+        [
+            "lingjie_new/rest1",
+            1664
+        ],
+        [
+            "lingjie_new/rest1",
+            1408
+        ],
+        [
+            "lingjie_new/rest1",
+            1152
+        ],
+        [
+            "lingjie_new/rest1",
+            896
+        ],
+        [
+            "lingjie_new/rest1",
+            640
+        ],
+        [
+            "lingjie_new/rest1",
+            384
+        ],
+        [
+            "lingjie_new/rest1",
+            257
+        ],
+        [
+            "lingjie_new/rest2",
+            3200
+        ],
+        [
+            "lingjie_new/rest2",
+            2944
+        ],
+        [
+            "lingjie_new/rest2",
+            2688
+        ],
+        [
+            "lingjie_new/rest2",
+            2432
+        ],
+        [
+            "lingjie_new/rest2",
+            2176
+        ],
+        [
+            "lingjie_new/rest2",
+            1920
+        ],
+        [
+            "lingjie_new/rest2",
+            1664
+        ],
+        [
+            "lingjie_new/rest2",
+            1408
+        ],
+        [
+            "lingjie_new/rest2",
+            1152
+        ],
+        [
+            "lingjie_new/rest2",
+            896
+        ],
+        [
+            "lingjie_new/rest2",
+            640
+        ],
+        [
+            "lingjie_new/rest2",
+            384
+        ],
+        [
+            "lingjie_new/rest2",
+            257
+        ],
+        [
+            "lingjie_new/stairs1",
+            1000
+        ],
+        [
+            "lingjie_new/stairs1",
+            744
+        ],
+        [
+            "lingjie_new/stairs1",
+            488
+        ],
+        [
+            "lingjie_new/stairs1",
+            257
+        ],
+        [
+            "lingjie_new/stairs2",
+            800
+        ],
+        [
+            "lingjie_new/stairs2",
+            544
+        ],
+        [
+            "lingjie_new/stairs2",
+            288
+        ],
+        [
+            "lingjie_new/stairs2",
+            257
+        ],
+        [
+            "lingjie_new/stairs3",
+            600
+        ],
+        [
+            "lingjie_new/stairs3",
+            344
+        ],
+        [
+            "lingjie_new/stairs3",
+            257
+        ],
+        [
+            "lingjie_new/stairs4",
+            800
+        ],
+        [
+            "lingjie_new/stairs4",
+            544
+        ],
+        [
+            "lingjie_new/stairs4",
+            288
+        ],
+        [
+            "lingjie_new/stairs4",
             257
         ]
     ]

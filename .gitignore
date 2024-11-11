@@ -8,6 +8,10 @@ utils/cmu_trained_ckpt_you2me_final
 utils/cmu_trained_ckpt_you2me_actionformer
 you2me_ds_release_cmu (1)/
 you2me_ds_release_kinect/
+EgoPW_dataset_release/
+SceneEgo_test/
+SceneEgo_train/
+utils/scene_trained_ckpt_sceneego_final/
 # Ignore Python cache files
 testing.py
 __pycache__/

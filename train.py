@@ -26,38 +26,17 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print("OS:", os.cpu_count())
 print("Working On:",device)
 # Number of joints and coordinates per joint
-num_joints = 19
+num_joints = 15
 coords_per_joint = 3
 
-# Define bidirectional connections for the central body part
-bidirectional_connections = [
-    (0, 1), (0,2),
-	(1, 15), (15, 16),
-	(1, 17), (17, 18),
-	(2, 6), (2, 12),
-]
-# Define unidirectional connections for limbs and extended parts
-unidirectional_connections = [
-	(0, 3), (0, 9),
-	(3, 4), (4,5),
-    (9, 10), (10,11),
-	(6, 7), (7, 8),
-	(12, 13), (13, 14),
-]
-
+# Define a joint hierarchy based on an assumed structure
+connections = [(0, 1), (0, 4), (1, 2), (2, 3), (4, 5), (5, 6), (1, 7), (4, 11), (7, 8), (8, 9), (9, 10),
+         (11, 12), (12, 13), (13, 14), (7, 11)]
 # Initialize lists for edge indices
 edge_index = [[], []]
 
-# Add bidirectional edges (both directions for each pair)
-for joint_a, joint_b in bidirectional_connections:
-    for j in range(coords_per_joint):
-        edge_index[0].append(joint_a * coords_per_joint + j)
-        edge_index[1].append(joint_b * coords_per_joint + j)
-        edge_index[0].append(joint_b * coords_per_joint + j)
-        edge_index[1].append(joint_a * coords_per_joint + j)
-
 # Add unidirectional edges (one direction for each pair)
-for joint_a, joint_b in unidirectional_connections:
+for joint_a, joint_b in connections:
     for j in range(coords_per_joint):
         edge_index[0].append(joint_a * coords_per_joint + j)
         edge_index[1].append(joint_b * coords_per_joint + j)
@@ -96,7 +75,7 @@ def main(args):
 	print("Total dataset", len(data_loader.dataset))
 	encoder = EncoderCNN(args.embed_size, actionformer_feature_extractor).to(device)
 
-	model_dir = os.path.abspath('utils/cmu_trained_ckpt_you2me_actionformer')
+	model_dir = os.path.abspath('utils/egopw_trained_ckpt_egopw_final')
 	temporal_gcn = TemporalGCN(
 						 args.hidden_size,
 						 args.seq_length,
@@ -117,7 +96,7 @@ def main(args):
 		print("Printing epoch:", epoch)
 		encoder.train()
 		decoder.train()
-		for i, (images, gt_egoposes, homography, poses2, lengths) in enumerate(data_loader):
+		for i, (images, gt_egoposes, lengths) in enumerate(data_loader):
 			print("Printing iteration number:", i)
 			images = images.to(device)
 			gt_egoposes = gt_egoposes.to(device)
@@ -125,7 +104,7 @@ def main(args):
 			targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
 			features = encoder(images)
 			print("Feature shape:", features.shape)
-			outputs = decoder(features, lengths, homography)
+			outputs = decoder(features, lengths)
 			loss = criterion(outputs, targets)
 			if torch.isnan(loss):
 				print(f"NaN detected! Epoch: {epoch}, Iteration: {i}")
@@ -155,9 +134,9 @@ if __name__== '__main__':
 	parser.add_argument('--model_path', type=str, required=True, help='path for saving trained models')
 	parser.add_argument('--annotation_path', type=str, required=True, help='path for annotation wrapper')
 
-	parser.add_argument('--image_dir', type=str, default='you2me_ds_release_cmu (1)/cmu', help='directory for resized images')
-	parser.add_argument('--h_dir', type=str, default='you2me_ds_release_cmu (1)/cmu', help='directory for resized images')
-	parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_cmu (1)/cmu', help='directory for resized images')
+	parser.add_argument('--image_dir', type=str, default='D:/Dataset/EgoPW_dataset/EgoPW_dataset_release', help='directory for resized images')
+	parser.add_argument('--h_dir', type=str, default='D:/Dataset/EgoPW_dataset/EgoPW_dataset_release', help='directory for resized images')
+	parser.add_argument('--openpose_dir', type=str, default='D:/Dataset/EgoPW_dataset/EgoPW_dataset_release', help='directory for resized images')
 
 	parser.add_argument('--embed_size', type=int , default=256, help='dimension of word embedding vectors')
 	parser.add_argument('--hidden_size', type=int, default=512, help='dimension of lstm hidden states')
