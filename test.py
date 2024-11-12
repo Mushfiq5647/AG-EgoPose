@@ -131,9 +131,9 @@ if __name__ == '__main__':
     parser.add_argument('--test_annotation_path', type=str, required=True, help='path for annotation wrapper')
 
     # Directories
-    parser.add_argument('--image_dir', type=str, default='you2me_ds_release_cmu (1)/cmu', help='directory for resized images')
-    parser.add_argument('--h_dir', type=str, default='you2me_ds_release_cmu (1)/cmu', help='directory for homography')
-    parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_cmu (1)/cmu', help='directory for OpenPose JSON files')
+    parser.add_argument('--image_dir', type=str, default='you2me_ds_release_cmu/cmu', help='directory for resized images')
+    parser.add_argument('--h_dir', type=str, default='you2me_ds_release_cmu/cmu', help='directory for homography')
+    parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_cmu/cmu', help='directory for OpenPose JSON files')
 
     # Model parameters
     parser.add_argument('--embed_size', type=int, default=256, help='dimension of word embedding vectors')

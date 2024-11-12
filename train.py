@@ -125,7 +125,7 @@ def main(args):
 			targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
 			features = encoder(images)
 			print("Feature shape:", features.shape)
-			outputs = decoder(features, lengths, homography)
+			outputs = decoder(features, lengths, homography, poses2)
 			loss = criterion(outputs, targets)
 			if torch.isnan(loss):
 				print(f"NaN detected! Epoch: {epoch}, Iteration: {i}")
@@ -155,9 +155,9 @@ if __name__== '__main__':
 	parser.add_argument('--model_path', type=str, required=True, help='path for saving trained models')
 	parser.add_argument('--annotation_path', type=str, required=True, help='path for annotation wrapper')
 
-	parser.add_argument('--image_dir', type=str, default='you2me_ds_release_cmu (1)/cmu', help='directory for resized images')
-	parser.add_argument('--h_dir', type=str, default='you2me_ds_release_cmu (1)/cmu', help='directory for resized images')
-	parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_cmu (1)/cmu', help='directory for resized images')
+	parser.add_argument('--image_dir', type=str, default='you2me_ds_release_cmu/cmu', help='directory for resized images')
+	parser.add_argument('--h_dir', type=str, default='you2me_ds_release_cmu/cmu', help='directory for resized images')
+	parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_cmu/cmu', help='directory for resized images')
 
 	parser.add_argument('--embed_size', type=int , default=256, help='dimension of word embedding vectors')
 	parser.add_argument('--hidden_size', type=int, default=512, help='dimension of lstm hidden states')
