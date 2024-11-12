@@ -36,8 +36,29 @@ def build_test_annotation(dataset):
                            "11-hand2": 3453,
                            "12-hand3": 2454,
                            "14-sports2": 2133}
+
+    sceneego_categories = {"diogo1": 2572,
+                           "diogo2": 2681,
+                           "jian1": 3697,
+                           "jian2": 4305
+                           }
+    egopw_categories = {"ayush/kitchen2": 2100, "ayush/out": 3500,
+                        "ayush_new/kitchen1": 3200, "ayush_new/office1": 3300, "ayush_new/office2": 2900,
+                        "kripa/kitchen": 1500, "kripa/office1": 4700, "kripa/office2": 3200, "kripa/out": 2200,
+                        "kripa/rountunda": 2100,
+                        "kripa_new/kitchen1": 2300, "kripa_new/kitchen2": 1500, "kripa_new/office1": 2600,
+                        "kripa_new/office2": 2300, "kripa_new/out": 2400, "kripa_new/rountunda2": 1900,
+                        "kripa_new/rountunda3": 1200, "kripa_new/rountunda4": 900,
+                        "lingjie_new/kitchen1": 4200, "lingjie_new/kitchen2": 3700, "lingjie_new/office1": 3900,
+                        "lingjie_new/office2": 4000, "lingjie_new/out1": 4400, "lingjie_new/out2": 3900,
+                        "lingjie_new/rest1": 3200,"lingjie_new/rest2": 3200, "lingjie_new/stairs1": 1000,
+                        "lingjie_new/stairs2": 800, "lingjie_new/stairs3": 600, "lingjie_new/stairs4": 800}
     if dataset == 'cmu':
         test_categories = cmu_test_categories
+    elif dataset == 'sceneego':
+        test_categories = sceneego_categories
+    elif dataset == 'egopw':
+        test_categories = egopw_categories
     else:
         categories = kinect_test_categories
 

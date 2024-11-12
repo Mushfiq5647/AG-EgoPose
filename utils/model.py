@@ -14,7 +14,7 @@ class TemporalGCN(nn.Module):
 	def __init__(self, hidden_dim, sequence_length, edge_index, output_dim=57, num_homog=15, homog_size=9, pose2_size=50):
 		super(TemporalGCN, self).__init__()
 		# GCN Layers (for spatial dependencies)
-		self.input_size = sequence_length + (homog_size * num_homog) + pose2_size
+		self.input_size = sequence_length*2
 		self.gcn1 = GCNConv(self.input_size, hidden_dim)
 		self.gcn2 = GCNConv(hidden_dim, hidden_dim)
 		self.edge_index = edge_index
@@ -87,10 +87,10 @@ class EncoderCNN(nn.Module):
 		feat_block = torch.stack(feat_block, dim=1)
 		combined_features = torch.cat((feat_block, compact_branch_features), dim=-1)
 		print("Feature block", combined_features.shape)
-		return feat_block
+		return combined_features
 
 class DecoderRNN(nn.Module):
-	def __init__(self, embed_size, hidden_size, sequence_length, num_layers, temporal_gcn, use_homog=True, use_pose2=True, output_size=57,
+	def __init__(self, embed_size, hidden_size, sequence_length, num_layers, temporal_gcn, use_homog=True, use_pose2=True, output_size=45,
 				 num_homog=15, homog_size=9, pose2_size=50):
 		super(DecoderRNN, self).__init__()
 		# self.embed = nn.Embedding(vocab_size, embed_size)
@@ -112,11 +112,11 @@ class DecoderRNN(nn.Module):
 	def forward(self, features, lengths, homography=None, poses2=None):
 		"""Decode image feature vectors and generate pose sequences."""
 		device = features.device
-		homography = homography.to(device)
-		poses2 = poses2.to(device)
-		embeddings = torch.cat((features, homography, poses2), dim=-1)
-		print("Embeddings shape", embeddings.shape)
-		gcn_outputs = self.temporal_gcn(embeddings)
+		# homography = homography.to(device)
+		# embeddings = torch.cat((features), dim=-1)
+		# print("Embeddings shape", embeddings.shape)
+		print("Input to GCN", features.shape)
+		gcn_outputs = self.temporal_gcn(features)
 		print("GCN outputs shape", gcn_outputs.shape)
 		packed = pack_padded_sequence(gcn_outputs, lengths, batch_first=True)
 		print("Packed shape", type(packed))
