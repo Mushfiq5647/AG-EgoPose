@@ -7,8 +7,13 @@ utils/kinect_trained_ckpt_you2megcn
 utils/kinect_trained_ckpt_final
 utils/cmu_trained_ckpt_you2me_actionformer/
 utils/cmu_trained_ckpt_you2me_final
-you2me_ds_release_cmu (1)/
 you2me_ds_release_kinect/
+SceneEgo_test/
+SceneEgo_train/
+utils/cmu_trained_ckpt_baseyou2me/
+utils/cmu_trained_ckpt_final/
+you2me_ds_release_cmu/
+
 annotations.json
 test_annotations.json
 homography.py

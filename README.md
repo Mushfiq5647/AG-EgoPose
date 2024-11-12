@@ -46,7 +46,7 @@ Then run the following command:
 
 
 For testing:
-`python test.py --encoder_path ./utils/trained_ckpt_actionformer/encoder-20-61.ckpt --decoder_path ./utils/trained_ckpt_actionformer/decoder-20-61.ckpt --test_annotation_path ./vocab/test_annotation.pkl`
+`python test.py --encoder_path ./utils/cmu_trained_ckpt_final/encoder-20-37.ckpt --decoder_path ./utils/cmu_trained_ckpt_final/decoder-20-37.ckpt --test_annotation_path ./vocab/test_annotation.pkl`
 
 Change flag `--upp` to `--low` to train the lower body model.
 

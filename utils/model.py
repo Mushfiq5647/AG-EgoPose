@@ -13,7 +13,7 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 class TemporalGCN(nn.Module):
 	def __init__(self, hidden_dim, sequence_length, edge_index, output_dim=75, kernel_size=9, num_homog=15, homog_size=9):
 		super(TemporalGCN, self).__init__()
-		self.input_size = sequence_length*2 + (homog_size * num_homog)
+		self.input_size = sequence_length*2
 		self.edge_index = edge_index
 		self.gcn1 = GCNConv(self.input_size, hidden_dim)
 		self.gcn2 = GCNConv(hidden_dim, hidden_dim)
@@ -94,7 +94,7 @@ class EncoderCNN(nn.Module):
 		return combined_features
 
 class DecoderRNN(nn.Module):
-	def __init__(self, embed_size, hidden_size, sequence_length, num_layers, temporal_gcn, use_homog=True, use_pose2=True, output_size=75,
+	def __init__(self, embed_size, hidden_size, sequence_length, num_layers, temporal_gcn, use_homog=True, use_pose2=True, output_size=57,
 				 num_homog=15, homog_size=9, pose2_size=75):
 		super(DecoderRNN, self).__init__()
 		# self.embed = nn.Embedding(vocab_size, embed_size)
@@ -113,16 +113,10 @@ class DecoderRNN(nn.Module):
 		self.sequence_length = sequence_length
 		self.temporal_gcn = temporal_gcn
 
-	def forward(self, features, lengths, homography=None, poses2=None):
+	def forward(self, features, lengths):
 		"""Decode image feature vectors and generate pose sequences."""
 		device = features.device
-		if self.use_homog and self.use_pose2:
-			print(type(homography))
-			homography = homography.to(device)
-			poses2 = poses2.to(device)
-			embeddings = torch.cat((features, homography), dim=-1)
-			print("Embeddings shape", embeddings.shape)
-		gcn_outputs = self.temporal_gcn(embeddings)
+		gcn_outputs = self.temporal_gcn(features)
 		packed = pack_padded_sequence(gcn_outputs, lengths, batch_first=True)
 		hiddens, _ = self.lstm(packed)
 		final_outputs = self.linear(hiddens[0])

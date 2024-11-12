@@ -22,29 +22,23 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 print("OS:", os.cpu_count())
 print("Working On:",device)
-# Number of joints and coordinates per joint
-num_joints = 25
+num_joints = 19
 coords_per_joint = 3
 
 # Define bidirectional connections for the central body part
 bidirectional_connections = [
-    (0, 1),  # SpineBase <-> SpineMid
-    (1, 20), # SpineMid <-> SpineShoulder
-    (20, 2), # SpineShoulder <-> Neck
-    (2, 3),  # Neck <-> Head
-    (0, 12), # SpineBase <-> HipLeft
-    (0, 16)  # SpineBase <-> HipRight
+    (0, 1), (0,2),
+	(1, 15), (15, 16),
+	(1, 17), (17, 18),
+	(2, 6), (2, 12),
 ]
-
+# Define unidirectional connections for limbs and extended parts
 unidirectional_connections = [
-    # Left arm chain
-    (20, 4), (4, 5), (5, 6), (6, 7), (6, 22), (7, 21),
-    # Right arm chain
-    (20, 8), (8, 9), (9, 10), (10, 11), (10, 24), (11, 23),
-    # Left leg chain
-    (12, 13), (13, 14), (14, 15),
-    # Right leg chain
-    (16, 17), (17, 18), (18, 19)
+	(0, 3), (0, 9),
+	(3, 4), (4,5),
+    (9, 10), (10,11),
+	(6, 7), (7, 8),
+	(12, 13), (13, 14),
 ]
 
 edge_index = [[], []]
@@ -105,22 +99,22 @@ def main(args):
 
     # loss and optimizer
     criterion = nn.MSELoss()
-    params = list(decoder.parameters()) + list(encoder.linear.parameters()) + list(encoder.bn.parameters())
+    params = list(decoder.parameters()) + list(encoder.linear.parameters()) + list(encoder.bn.parameters()) + list(temporal_gcn.parameters())
     optimizer = torch.optim.Adam(params, lr=args.learning_rate)
-    model_dir = os.path.abspath('./utils/kinect_trained_ckpt_final')
+    model_dir = os.path.abspath('./utils/cmu_trained_ckpt_final')
     total_step = len(data_loader)
     for epoch in range(args.num_epochs):
         print("Printing epoch:", epoch)
         encoder.train()
         decoder.train()
-        for i, (images, gt_egoposes, homography, poses2, lengths) in enumerate(data_loader):
+        for i, (images, gt_egoposes, lengths) in enumerate(data_loader):
             print("Printing iteration number:", i)
             images = images.to(device)
             gt_egoposes = gt_egoposes.to(device)
             # Squeeze the targets to make them 1D
             targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
             features = encoder(images)
-            outputs = decoder(features, lengths, homography, poses2)
+            outputs = decoder(features, lengths)
             loss = criterion(outputs, targets)
             if torch.isnan(loss):
                 print(f"NaN detected! Epoch: {epoch}, Iteration: {i}")
@@ -129,6 +123,7 @@ def main(args):
             decoder.zero_grad()
             encoder.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(temporal_gcn.parameters(), args.clip_value)
             torch.nn.utils.clip_grad_norm_(decoder.parameters(), args.clip_value)
             torch.nn.utils.clip_grad_norm_(encoder.parameters(), args.clip_value)
             optimizer.step()
@@ -153,11 +148,11 @@ if __name__ == '__main__':
     parser.add_argument('--model_path', type=str, required=True, help='path for saving trained models')
     parser.add_argument('--annotation_path', type=str, required=True, help='path for annotation wrapper')
 
-    parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect',
+    parser.add_argument('--image_dir', type=str, default='you2me_ds_release_cmu/cmu',
                         help='directory for resized images')
-    parser.add_argument('--h_dir', type=str, default='you2me_ds_release_kinect/kinect',
+    parser.add_argument('--h_dir', type=str, default='you2me_ds_release_cmu/cmu',
                         help='directory for resized images')
-    parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect',
+    parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_cmu/cmu',
                         help='directory for resized images')
 
     parser.add_argument('--embed_size', type=int, default=256, help='dimension of word embedding vectors')

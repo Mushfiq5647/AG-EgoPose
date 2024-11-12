@@ -15,41 +15,55 @@ from action_recognition import initialize_actionformer
 # Device configuration
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-num_joints = 25
+num_joints = 19
 coords_per_joint = 3
 
-# Define connections between joints (based on the skeleton structure)
-connections = [
-    (0, 12), (0, 16), (0, 1),  # SpineBase to HipLeft, HipRight, SpineMid
-    (1, 20),  # SpineMid to SpineShoulder
-    (20, 2),  # SpineShoulder to Neck
-    (2, 3),  # Neck to Head
-    (20, 4), (4, 5), (5, 6), (6, 7), (6, 22), (7, 21),  # Left arm
-    (20, 8), (8, 9), (9, 10), (10, 11), (10, 24), (11, 23),  # Right arm
-    (12, 13), (13, 14), (14, 15),  # Left leg
-    (16, 17), (17, 18), (18, 19),  # Right leg
+# Define bidirectional connections for the central body part
+bidirectional_connections = [
+    (0, 1), (0,2),
+	(1, 15), (15, 16),
+	(1, 17), (17, 18),
+	(2, 6), (2, 12),
+]
+# Define unidirectional connections for limbs and extended parts
+unidirectional_connections = [
+	(0, 3), (0, 9),
+	(3, 4), (4,5),
+    (9, 10), (10,11),
+	(6, 7), (7, 8),
+	(12, 13), (13, 14),
 ]
 
-# Create the edge_index
 edge_index = [[], []]
 
-# For each connection, append the corresponding indices for all 3D coordinates (x, y, z)
-for joint_a, joint_b in connections:
+for joint_a, joint_b in bidirectional_connections:
     for j in range(coords_per_joint):
-        edge_index[0].append(joint_a * coords_per_joint + j)  # Source joint's coordinate index
-        edge_index[1].append(joint_b * coords_per_joint + j)  # Target joint's coordinate index
+        edge_index[0].append(joint_a * coords_per_joint + j)
+        edge_index[1].append(joint_b * coords_per_joint + j)
+        edge_index[0].append(joint_b * coords_per_joint + j)
+        edge_index[1].append(joint_a * coords_per_joint + j)
 
-# Convert to tensor
+# Add unidirectional edges (one direction for each pair)
+for joint_a, joint_b in unidirectional_connections:
+    for j in range(coords_per_joint):
+        edge_index[0].append(joint_a * coords_per_joint + j)
+        edge_index[1].append(joint_b * coords_per_joint + j)
+
+# Optionally, add self-loops for each joint
+for joint in range(num_joints):
+    for j in range(coords_per_joint):
+        edge_index[0].append(joint * coords_per_joint + j)
+        edge_index[1].append(joint * coords_per_joint + j)
+
 edge_index = torch.tensor(edge_index, dtype=torch.long)
-
 
 def mean_per_joint_position_error(predicted, target):
     # Reshape the data from (batch_size, sequence_length, 75) to (batch_size, sequence_length, 25, 3)
     print(f"Predicted shape: {predicted.shape}")
     print(f"Target shape: {target.shape}")
 
-    predicted = predicted.view(predicted.size(0), 25, 3)
-    target = target.view(target.size(0), 25, 3)
+    predicted = predicted.view(predicted.size(0), 19, 3)
+    target = target.view(target.size(0), 19, 3)
 
     # Compute the Euclidean distance (L2 norm) between predicted and target for each joint
     error = torch.norm(predicted - target, dim=-1)  # L2 norm along the last dimension (x, y, z)
@@ -100,27 +114,42 @@ def main(args):
     decoder.eval()
 
     total_mpjpe = 0
+    total_samples = 0
     with torch.no_grad():
-        for i, (images, gt_egoposes, homography, poses2, lengths) in enumerate(data_loader):
+        for i, (images, gt_egoposes, lengths) in enumerate(data_loader):
+            # Get batch size for this iteration
+            current_batch_size = images.size(0)  # Will be 16 for full batches, 12 for last batch
             images = images.to(device)
             gt_egoposes = gt_egoposes.to(device)
             targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
             # Forward pass
             features = encoder(images)
-            outputs = decoder(features, lengths, homography, poses2)
+            outputs = decoder(features, lengths)
             print("Outputs:", outputs.shape)
             print("Targets:", targets.shape)
-            outputs = outputs.view(-1, 75)
+            outputs = outputs.view(-1, 57)
 
-            # Calculate MPJPE
+            print(f"Batch {i + 1}:")
+            print(f"Current batch size: {current_batch_size}")
+            print(f"Outputs shape: {outputs.shape}")  # Should be (current_total_frames, 45)
+            print(f"Targets shape: {targets.shape}")
+
+            # Calculate MPJPE for this batch
             mpjpe = mean_per_joint_position_error(outputs, targets)
-            total_mpjpe += mpjpe
+
+            # Weight the MPJPE by the actual number of sequences in this batch
+            total_mpjpe += mpjpe * current_batch_size
+            total_samples += current_batch_size
 
             if (i + 1) % args.log_step == 0:
-                print(f'Batch [{i + 1}/{len(data_loader)}], MPJPE: {mpjpe:.4f}')
+                print(f'Batch [{i + 1}/{len(data_loader)}], '
+                      f'Batch Size: {current_batch_size}, '
+                      f'MPJPE: {mpjpe:.4f}')
 
-        avg_mpjpe = total_mpjpe / len(data_loader)
-        print(f'Average MPJPE: {avg_mpjpe:.4f}')
+    # Calculate weighted average MPJPE
+    avg_mpjpe = total_mpjpe / total_samples  # Dividing by actual number of sequences (540)
+    print(f'Total sequences processed: {total_samples}')  # Should print 540
+    print(f'Average MPJPE: {avg_mpjpe:.4f}')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -132,9 +161,12 @@ if __name__ == '__main__':
     parser.add_argument('--test_annotation_path', type=str, required=True, help='path for annotation wrapper')
 
     # Directories
-    parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for resized images')
-    parser.add_argument('--h_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for homography')
-    parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for OpenPose JSON files')
+    parser.add_argument('--image_dir', type=str, default='you2me_ds_release_cmu/cmu',
+                        help='directory for resized images')
+    parser.add_argument('--h_dir', type=str, default='you2me_ds_release_cmu/cmu',
+                        help='directory for resized images')
+    parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_cmu/cmu',
+                        help='directory for resized images')
 
     # Model parameters
     parser.add_argument('--embed_size', type=int, default=256, help='dimension of word embedding vectors')
