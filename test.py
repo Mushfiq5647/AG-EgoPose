@@ -15,36 +15,20 @@ from action_recognition import initialize_actionformer
 # Device configuration
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-num_joints = 19
+
+print("OS:", os.cpu_count())
+print("Working On:",device)
+num_joints = 15
 coords_per_joint = 3
 
-# Define bidirectional connections for the central body part
-bidirectional_connections = [
-    (0, 1), (0,2),
-	(1, 15), (15, 16),
-	(1, 17), (17, 18),
-	(2, 6), (2, 12),
-]
-# Define unidirectional connections for limbs and extended parts
-unidirectional_connections = [
-	(0, 3), (0, 9),
-	(3, 4), (4,5),
-    (9, 10), (10,11),
-	(6, 7), (7, 8),
-	(12, 13), (13, 14),
-]
-
+# Define a joint hierarchy based on an assumed structure
+connections = [(0, 1), (0, 4), (1, 2), (2, 3), (4, 5), (5, 6), (1, 7), (4, 11), (7, 8), (8, 9), (9, 10),
+         (11, 12), (12, 13), (13, 14), (7, 11)]
+# Initialize lists for edge indices
 edge_index = [[], []]
 
-for joint_a, joint_b in bidirectional_connections:
-    for j in range(coords_per_joint):
-        edge_index[0].append(joint_a * coords_per_joint + j)
-        edge_index[1].append(joint_b * coords_per_joint + j)
-        edge_index[0].append(joint_b * coords_per_joint + j)
-        edge_index[1].append(joint_a * coords_per_joint + j)
-
 # Add unidirectional edges (one direction for each pair)
-for joint_a, joint_b in unidirectional_connections:
+for joint_a, joint_b in connections:
     for j in range(coords_per_joint):
         edge_index[0].append(joint_a * coords_per_joint + j)
         edge_index[1].append(joint_b * coords_per_joint + j)
@@ -55,6 +39,8 @@ for joint in range(num_joints):
         edge_index[0].append(joint * coords_per_joint + j)
         edge_index[1].append(joint * coords_per_joint + j)
 
+print("Edge index:", edge_index)
+# Convert to tensor
 edge_index = torch.tensor(edge_index, dtype=torch.long)
 
 def mean_per_joint_position_error(predicted, target):
@@ -62,8 +48,8 @@ def mean_per_joint_position_error(predicted, target):
     print(f"Predicted shape: {predicted.shape}")
     print(f"Target shape: {target.shape}")
 
-    predicted = predicted.view(predicted.size(0), 19, 3)
-    target = target.view(target.size(0), 19, 3)
+    predicted = predicted.view(predicted.size(0), 15, 3)
+    target = target.view(target.size(0), 15, 3)
 
     # Compute the Euclidean distance (L2 norm) between predicted and target for each joint
     error = torch.norm(predicted - target, dim=-1)  # L2 norm along the last dimension (x, y, z)

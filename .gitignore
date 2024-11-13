@@ -7,6 +7,7 @@ utils/kinect_trained_ckpt_you2megcn
 utils/kinect_trained_ckpt_final
 utils/cmu_trained_ckpt_you2me_actionformer/
 utils/cmu_trained_ckpt_you2me_final
+utils/sceneego_trained_ckpt_final/
 you2me_ds_release_kinect/
 SceneEgo_test/
 SceneEgo_train/

@@ -50,51 +50,28 @@ def collate_fn(data):
 	images = torch.stack(images, 0)
 	lengths = [len(pose) for pose in target_egoposes]
 	max_length = max(lengths)
-	targets = torch.zeros(len(target_egoposes), max_length, 57)
+	targets = torch.zeros(len(target_egoposes), max_length, 45)
 	for i, pose in enumerate(target_egoposes):
 		end = lengths[i]
 		targets[i, :end, :] = pose[:end]
 	return images, targets, lengths
 
 def getPair(imroot, hroot, oproot, path, index, test_mode):
-	""" helper method to get the image corresponding to the pair """
-	if not test_mode:
-		with open(oproot + "/" + path + "/features/openpose/output_json/imxx" + str(index) + "_keypoints.json", 'r') as f:
-			js = json.loads(f.read())
-			if 'people' not in js or len(js['people']) == 0:
-				# No people detected, handle missing data
-				pose2 = [0] * 50
-			else:
-				pose_keypoints = js['people'][0].get('pose_keypoints_2d', [])
 
-				if len(pose_keypoints) == 0:
-					# If no keypoints are found, set to a default value
-					pose2 = [0] * 50
-				else:
-					pose2 = pose_keypoints
-					pose2 = [pose2[i] for i in range(len(pose2)) if (i + 1) % 3 != 0]
+	gt_data = []
+	with open(imroot + "/" + path + "/groundtruth_updated/gt_" + str(index) + ".txt", 'r') as file:
+		for line in file:
+			# Remove any brackets or extra characters
+			line = line.strip().replace('[', '').replace(']', '')
 
-		with open(imroot + "/" + path + "/synchronized/gt-skeletons/body3DScene_" + str(index) + ".json", 'r') as f:
-			js = json.load(f)
+			# Convert the line into a list of floats and append it to data
+			row = [float(value) for value in line.split()]
+			gt_data.append(row)  # Each row is appended as a list
 
-			# Check if "bodies" exists and is not empty
-			if 'bodies' not in js or len(js['bodies']) == 0:
-				# No bodies detected, handle missing data
-				egopose_gt = [0] * 57  # 19 joints * 3 coordinates
-			else:
-				# Find the body with "id" == 0
-				body_id_0 = next((body for body in js['bodies'] if body['id'] == 0), None)
+		# Flatten the 2D list into a 1D list
+		egopose_gt = [value for row in gt_data for value in row]
 
-				if body_id_0 is None or 'joints19' not in body_id_0:
-					# If "id" 0 is not found or no "joints19" data, set to default
-					egopose_gt = [0] * 57
-				else:
-					# Extract 3D coordinates only (skip confidence score)
-					joints19 = body_id_0['joints19']
-					egopose_gt = [joints19[i] for i in range(len(joints19)) if (i + 1) % 4 != 0]
-
-
-	path = path + "/synchronized/frames/imxx" + str(index) + ".jpg"
+	path = path + "/temp_img_dir/img_" + str(index) + ".jpg"
 	image = Image.open(os.path.join(imroot, path)).convert('RGB')
 	return image, egopose_gt
 
