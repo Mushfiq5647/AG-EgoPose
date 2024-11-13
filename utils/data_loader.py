@@ -50,7 +50,7 @@ def collate_fn(data):
 	images = torch.stack(images, 0)
 	lengths = [len(pose) for pose in target_egoposes]
 	max_length = max(lengths)
-	targets = torch.zeros(len(target_egoposes), max_length, 57)
+	targets = torch.zeros(len(target_egoposes), max_length, 75)
 	for i, pose in enumerate(target_egoposes):
 		end = lengths[i]
 		targets[i, :end, :] = pose[:end]
@@ -74,24 +74,9 @@ def getPair(imroot, hroot, oproot, path, index, test_mode):
 					pose2 = pose_keypoints
 					pose2 = [pose2[i] for i in range(len(pose2)) if (i + 1) % 3 != 0]
 
-		with open(imroot + "/" + path + "/synchronized/gt-skeletons/body3DScene_" + str(index) + ".json", 'r') as f:
-			js = json.load(f)
-
-			# Check if "bodies" exists and is not empty
-			if 'bodies' not in js or len(js['bodies']) == 0:
-				# No bodies detected, handle missing data
-				egopose_gt = [0] * 57  # 19 joints * 3 coordinates
-			else:
-				# Find the body with "id" == 0
-				body_id_0 = next((body for body in js['bodies'] if body['id'] == 0), None)
-
-				if body_id_0 is None or 'joints19' not in body_id_0:
-					# If "id" 0 is not found or no "joints19" data, set to default
-					egopose_gt = [0] * 57
-				else:
-					# Extract 3D coordinates only (skip confidence score)
-					joints19 = body_id_0['joints19']
-					egopose_gt = [joints19[i] for i in range(len(joints19)) if (i + 1) % 4 != 0]
+		egopose_file = imroot + "/" + path + "/synchronized/gt-egopose/p" + str(index) + ".txt"
+		with open(egopose_file, 'r') as f:
+			egopose_gt = list(map(float, f.read().split()))
 
 
 	path = path + "/synchronized/frames/imxx" + str(index) + ".jpg"

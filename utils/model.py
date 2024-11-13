@@ -94,7 +94,7 @@ class EncoderCNN(nn.Module):
 		return combined_features
 
 class DecoderRNN(nn.Module):
-	def __init__(self, embed_size, hidden_size, sequence_length, num_layers, temporal_gcn, use_homog=True, use_pose2=True, output_size=57,
+	def __init__(self, embed_size, hidden_size, sequence_length, num_layers, temporal_gcn, use_homog=True, use_pose2=True, output_size=75,
 				 num_homog=15, homog_size=9, pose2_size=75):
 		super(DecoderRNN, self).__init__()
 		# self.embed = nn.Embedding(vocab_size, embed_size)

@@ -60,7 +60,7 @@ def build_test_annotation(dataset):
     elif dataset == 'egopw':
         test_categories = egopw_categories
     else:
-        categories = kinect_test_categories
+        test_categories = kinect_test_categories
 
     for cat in test_categories:
         count = 0

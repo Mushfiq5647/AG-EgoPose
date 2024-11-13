@@ -15,23 +15,28 @@ from action_recognition import initialize_actionformer
 # Device configuration
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-num_joints = 19
+num_joints = 25
 coords_per_joint = 3
 
 # Define bidirectional connections for the central body part
 bidirectional_connections = [
-    (0, 1), (0,2),
-	(1, 15), (15, 16),
-	(1, 17), (17, 18),
-	(2, 6), (2, 12),
+    (0, 1),  # SpineBase <-> SpineMid
+    (1, 20), # SpineMid <-> SpineShoulder
+    (20, 2), # SpineShoulder <-> Neck
+    (2, 3),  # Neck <-> Head
+    (0, 12), # SpineBase <-> HipLeft
+    (0, 16)  # SpineBase <-> HipRight
 ]
-# Define unidirectional connections for limbs and extended parts
+
 unidirectional_connections = [
-	(0, 3), (0, 9),
-	(3, 4), (4,5),
-    (9, 10), (10,11),
-	(6, 7), (7, 8),
-	(12, 13), (13, 14),
+    # Left arm chain
+    (20, 4), (4, 5), (5, 6), (6, 7), (6, 22), (7, 21),
+    # Right arm chain
+    (20, 8), (8, 9), (9, 10), (10, 11), (10, 24), (11, 23),
+    # Left leg chain
+    (12, 13), (13, 14), (14, 15),
+    # Right leg chain
+    (16, 17), (17, 18), (18, 19)
 ]
 
 edge_index = [[], []]
@@ -62,8 +67,8 @@ def mean_per_joint_position_error(predicted, target):
     print(f"Predicted shape: {predicted.shape}")
     print(f"Target shape: {target.shape}")
 
-    predicted = predicted.view(predicted.size(0), 19, 3)
-    target = target.view(target.size(0), 19, 3)
+    predicted = predicted.view(predicted.size(0), 25, 3)
+    target = target.view(target.size(0), 25, 3)
 
     # Compute the Euclidean distance (L2 norm) between predicted and target for each joint
     error = torch.norm(predicted - target, dim=-1)  # L2 norm along the last dimension (x, y, z)
@@ -127,7 +132,7 @@ def main(args):
             outputs = decoder(features, lengths)
             print("Outputs:", outputs.shape)
             print("Targets:", targets.shape)
-            outputs = outputs.view(-1, 57)
+            outputs = outputs.view(-1, 75)
 
             print(f"Batch {i + 1}:")
             print(f"Current batch size: {current_batch_size}")
@@ -161,11 +166,11 @@ if __name__ == '__main__':
     parser.add_argument('--test_annotation_path', type=str, required=True, help='path for annotation wrapper')
 
     # Directories
-    parser.add_argument('--image_dir', type=str, default='you2me_ds_release_cmu/cmu',
+    parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect',
                         help='directory for resized images')
-    parser.add_argument('--h_dir', type=str, default='you2me_ds_release_cmu/cmu',
+    parser.add_argument('--h_dir', type=str, default='you2me_ds_release_kinect/kinect',
                         help='directory for resized images')
-    parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_cmu/cmu',
+    parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect',
                         help='directory for resized images')
 
     # Model parameters
