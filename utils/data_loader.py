@@ -97,6 +97,7 @@ def getPair(imroot, hroot, oproot, path, index, test_mode):
 		h = None
 		pose2 = None
 
+
 	egopose_file = imroot + "/" + path + "/synchronized/gt-egopose/p" + str(index) + ".txt"
 	with open(egopose_file, 'r') as f:
 		egopose_gt = list(map(float, f.read().split()))

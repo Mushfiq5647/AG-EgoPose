@@ -11,6 +11,7 @@ from utils.model import EncoderCNN, DecoderRNN,TemporalGCN
 from torchvision import transforms
 from torch.nn.utils.rnn import pack_padded_sequence
 from action_recognition import initialize_actionformer
+from copy import deepcopy
 
 # Device configuration
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -42,6 +43,64 @@ for joint_a, joint_b in connections:
 # Convert to tensor
 edge_index = torch.tensor(edge_index, dtype=torch.long)
 
+def umeyama(P, Q):
+    assert P.shape == Q.shape
+    n, dim = P.shape
+
+    centeredP = P - P.mean(axis=0)
+    centeredQ = Q - Q.mean(axis=0)
+
+    C = np.dot(np.transpose(centeredP), centeredQ) / n
+
+
+
+    V, S, W = np.linalg.svd(C)
+    d = (np.linalg.det(V) * np.linalg.det(W)) < 0.0
+
+    if d:
+        S[-1] = -S[-1]
+        V[:, -1] = -V[:, -1]
+
+    R = np.dot(V, W)
+
+    varP = np.var(P, axis=0).sum()
+    c = 1/varP * np.sum(S) # scale factor
+
+    t = Q.mean(axis=0) - P.mean(axis=0).dot(c*R)
+
+    return c, R, t
+def align_skeleton(estimated_seq, gt_seq, skeleton_model=None, scale=True):
+    estimated_seq = deepcopy(np.asarray(estimated_seq))
+    gt_seq = deepcopy(np.asarray(gt_seq))
+    if skeleton_model is not None:
+        for i in range(len(estimated_seq)):
+            estimated_seq[i] = skeleton_model.skeleton_resize_single(
+                estimated_seq[i],
+                bone_length_file='utils/fisheye/mean3D.mat')
+        for i in range(len(gt_seq)):
+            gt_seq[i] = skeleton_model.skeleton_resize_single(
+                gt_seq[i],
+                bone_length_file='utils/fisheye/mean3D.mat')
+
+    aligned_pose_list = np.zeros_like(estimated_seq)
+    for s in range(estimated_seq.shape[0]):
+        pose_p = estimated_seq[s]
+        pose_gt_bs = gt_seq[s]
+        if scale is False:
+            # if scale is False, firstly align the center of each pose
+            pose_p_center = np.mean(pose_p, axis=0)
+            pose_gt_center = np.mean(pose_gt_bs, axis=0)
+            pose_p -= pose_p_center
+            pose_gt_bs -= pose_gt_center
+
+        c, R, t = umeyama(pose_p, pose_gt_bs)
+        if scale is True:
+            pose_p = pose_p.dot(R) * c + t
+        else:
+            pose_p = pose_p.dot(R) + t
+        aligned_pose_list[s] = pose_p
+
+    return aligned_pose_list, gt_seq
 
 def mean_per_joint_position_error(predicted, target):
     # Reshape the data from (batch_size, sequence_length, 75) to (batch_size, sequence_length, 25, 3)
@@ -114,12 +173,15 @@ def main(args):
 
             # Calculate MPJPE
             mpjpe = mean_per_joint_position_error(outputs, targets)
+            aligned_outputs, groundtruth = align_skeleton(outputs, targets, None)
+            pa_mpjpe = mean_per_joint_position_error(aligned_outputs, groundtruth)
             total_mpjpe += mpjpe
-
+            total_pa_pjpe = pa_mpjpe
             if (i + 1) % args.log_step == 0:
                 print(f'Batch [{i + 1}/{len(data_loader)}], MPJPE: {mpjpe:.4f}')
 
         avg_mpjpe = total_mpjpe / len(data_loader)
+        avg_pa_mpjpe = total_pa_pjpe / len(data_loader)
         print(f'Average MPJPE: {avg_mpjpe:.4f}')
 
 if __name__ == '__main__':

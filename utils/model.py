@@ -13,18 +13,20 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 class TemporalGCN(nn.Module):
 	def __init__(self, hidden_dim, sequence_length, edge_index, output_dim=75, kernel_size=9, num_homog=15, homog_size=9):
 		super(TemporalGCN, self).__init__()
-		self.input_size = sequence_length*2 + (homog_size * num_homog)
+		self.input_size = sequence_length + (homog_size * num_homog) + output_dim
 		self.edge_index = edge_index
 		self.gcn1 = GCNConv(self.input_size, hidden_dim)
 		self.gcn2 = GCNConv(hidden_dim, hidden_dim)
 
 	def forward(self, combined_features):
 		# Step 1: Apply GCN Layer 1 for spatial learning (spatial message passing)
+		print("Feature shape:", combined_features.shape)
 		device = combined_features.device
 		edge_index = self.edge_index.to(device)
 		x = self.gcn1(combined_features, edge_index)
 		x = torch.relu(x)
 		print("In GCN")
+		print("GCN shape:", x.shape)
 		x = self.gcn2(x, edge_index)
 		x = torch.relu(x)
 		return x
@@ -91,7 +93,7 @@ class EncoderCNN(nn.Module):
 		feat_block = torch.stack(feat_block, dim=1)
 		combined_features = torch.cat((feat_block, compact_branch_features), dim=-1)
 		print("Feature block", type(feat_block), combined_features.shape)
-		return combined_features
+		return feat_block
 
 class DecoderRNN(nn.Module):
 	def __init__(self, embed_size, hidden_size, sequence_length, num_layers, temporal_gcn, use_homog=True, use_pose2=True, output_size=75,
@@ -131,23 +133,28 @@ class DecoderRNN(nn.Module):
 
 	def sample(self, features, homography, openpose, states=None):
 		sampled_ids = []
-		embeddings = torch.zeros([1, 1, self.output_size]).cuda().float()
+		embeddings = torch.zeros([1, 0]).to(features.device)  # Adjust size as needed
+		device = features.device
+		homography = homography.to(device)
+		openpose = openpose.to(device)
+		print("Feature shape", features.shape)
+		print("Homography shape", homography.shape)
 		features = features.squeeze(0)
 		output_list = []
-		for i in range(features.shape[0]):
-			curr_feat = features[i].unsqueeze(0).unsqueeze(1)
-			curr_h = homography[i].unsqueeze(0).unsqueeze(1)
-			# print("Homography shape", curr_h.shape)
-			curr_op = openpose[i].unsqueeze(0).unsqueeze(1)
-			# print("Homography shape", curr_h.shape)
-			tensor = torch.cat((embeddings, curr_feat), 2)
-			tensor = torch.cat((tensor, curr_h.cuda()), 2)
-			tensor = torch.cat((tensor, curr_op.cuda()), 2)	
-			hiddens, states = self.lstm(tensor, states)
-			outputs = self.linear(hiddens[0])
-			output_list.append(outputs)
-			all_outputs = torch.cat(output_list, dim=0)  # Shape: [256, output_size]
-			# print("Output shape", outputs.shape)
-		return all_outputs
+		# for i in range(features.shape[0]):
+		# 	curr_feat = features[i]  # Shape [1, feature_dim]
+		# 	curr_h = homography[i]
+		# 	curr_op = openpose[i]
+		# 	print("Feature shape", curr_feat.shape)
+		# 	print("Homography shape", curr_h.shape)
 
+		tensor = torch.cat((features, homography, openpose), dim=1)  # Now shape should be [1, 466]
+		# Pass to GCN
+		gcn_outputs = self.temporal_gcn(tensor)
+		gcn_outputs = gcn_outputs.unsqueeze(0)
+		print("GCN output",gcn_outputs.shape)
+		hiddens, states = self.lstm(gcn_outputs, states)
+		outputs = self.linear(hiddens[0])
+		print("LSTM output", gcn_outputs.shape)
+		return outputs
 

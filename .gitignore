@@ -13,6 +13,13 @@ annotations.json
 test_annotations.json
 homography.py
 testing.py
+egopw_dict.txt
+generate_homography_and_adjust.py
+generate_3D_plot_point.py
+generate_egopw.py
+generate_global-ego.py
+test_egoglobal.txt
+update_homography.py
 # Ignore Python cache files
 __pycache__/
 .idea/

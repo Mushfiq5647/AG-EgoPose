@@ -4,10 +4,23 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
+kinect_connections = [
+    (0, 1),
+    (1,2),
+    (2, 3),
+    (2,4),
+    (4, 5), (5, 6), (6, 7),
+    (7, 21), (7, 22),
+    (2, 8), (8, 9), (9, 10), (10, 11), (11, 23), (11, 24),
+    # SpineBase <-> SpineMid
+    # (1, 20), # SpineMid <-> SpineShoulder
+    # (20, 2), # SpineShoulder <-> Neck  # Neck <-> Head
+    (0, 12), (12, 13), (13, 14), (14, 15),# SpineBase <-> HipLeft
+    (0, 16), (16, 17), (17, 18), (18, 19) # SpineBase <-> HipRight
+]
+
 
 def draw_joints(joints, ax):
-    with open('outputs.txt', 'w') as f:
-        f.write(str(joints))
     # Spine
     ax.plot3D(joints[[0, 1], 0], joints[[0, 1], 2], joints[[0, 1], 1])  # SpineBase -> SpineMid
     ax.plot3D(joints[[1, 2], 0], joints[[1, 2], 2], joints[[1, 2], 1])  # SpineMid -> Neck
@@ -68,10 +81,37 @@ def _set_axes_radius(ax, origin, radius):
     ax.set_zlim3d([z - radius, z + radius])
 
 
+egopw_joint_connections = [(0, 1), (0, 4), (1, 2), (2, 3), (4, 5), (5, 6), (1, 7), (4, 11), (7, 8), (8, 9), (9, 10),
+         (11, 12), (12, 13), (13, 14), (7, 11)]
+
+def plot_3D_joints(joints, ax):
+    # Scatter plot of the joints
+    filtered_joints = np.delete(joints, 20, axis=0)
+    ax.scatter3D(filtered_joints[:, 0], filtered_joints[:, 2], filtered_joints[:, 1], color='blue')
+
+    #Draw connections
+    for connection in kinect_connections:
+        start, end = connection
+        ax.plot3D([joints[start, 0], joints[end, 0]],
+                [joints[start, 2], joints[end, 2]],
+                [joints[start, 1], joints[end, 1]], color='red')
+
+    # # Annotate each joint with its index
+    # for i in range(joints.shape[0]):
+    #     ax.text(joints[i, 0], joints[i, 1], joints[i, 2], f"{i}", color='red')
+
+    # Set labels and title
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.set_title('3D Joint Positions with Connections')
+
+    plt.show()
+
 def show_upp(joints):
 	fig = plt.figure()
 	ax = fig.add_subplot(111, projection='3d')
 	ax.set_aspect('equal')
-	draw_joints(joints, ax)
+	plot_3D_joints(joints, ax)
 	set_axes_equal(ax)
 	plt.show()
