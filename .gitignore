@@ -1,3 +1,6 @@
+__pycache__/
+.idea/
+*.pyc
 actionformer/
 actionformer/config/
 actionformer/epoch_014.pth.tar
@@ -20,8 +23,8 @@ generate_egopw.py
 generate_global-ego.py
 test_egoglobal.txt
 update_homography.py
+update_homography_number.py
+testing.py
 # Ignore Python cache files
-__pycache__/
-.idea/
-*.pyc
+
 

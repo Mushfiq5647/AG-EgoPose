@@ -21,7 +21,8 @@ model: {
   fpn_type: identity,
   max_buffer_len_factor: 1.0,
   # 192 - 96 - 48 - 24 - 12 - 6
-  n_mha_win_size: [7, 7, 7, 7, 7, -1],
+#  n_mha_win_size: [7, 7, 7, 7, 7, -1],
+  n_mha_win_size: [3, 3, 3, 3, -1, -1],
   # shrink the model for reduced input feature channels
   n_head: 4,
   embd_dim: 256,

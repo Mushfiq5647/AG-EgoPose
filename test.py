@@ -1,18 +1,31 @@
+# Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 import argparse
 import torch
+import sys
 import torch.nn as nn
+import tqdm
+from options.test_options import TestOptions
 import numpy as np
 import os
 import pickle
-from utils.data_loader import get_loader
-from utils.build_vocab import Vocabulary
-from utils.build_test_annotation import TestAnnotation
-from utils.model import EncoderCNN, DecoderRNN,TemporalGCN
-from torchvision import transforms
-from torch.nn.utils.rnn import pack_padded_sequence
+from utils.data_loader import dataloader_full
+from utils.build_annotation import Annotation
+from action_recognition import ActionFormerFeatureExtractor
 from action_recognition import initialize_actionformer
-from copy import deepcopy
+from utils.model import EncoderCNN, TransformerDecoder, SpatioTemporalTransformer
+from torch.nn.utils.rnn import pack_padded_sequence
+from torch.optim.lr_scheduler import MultiStepLR
+from utils.build_annotation import Annotation
+from torchvision import transforms
+torch.set_printoptions(threshold=torch.inf)
+torch.manual_seed(7)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+print("OS:", os.cpu_count())
+print("Working On:",device)
+# Number of joints and coordinates per joint
+num_joints = 16
+coords_per_joint = 3
 # Device configuration
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -107,8 +120,8 @@ def mean_per_joint_position_error(predicted, target):
     print(f"Predicted shape: {predicted.shape}")
     print(f"Target shape: {target.shape}")
 
-    predicted = predicted.view(predicted.size(0), 25, 3)
-    target = target.view(target.size(0), 25, 3)
+    # predicted = predicted.view(predicted.size(0), 16, 3)
+    # target = target.view(target.size(0), 16, 3)
 
     # Compute the Euclidean distance (L2 norm) between predicted and target for each joint
     error = torch.norm(predicted - target, dim=-1)  # L2 norm along the last dimension (x, y, z)
@@ -119,38 +132,27 @@ def mean_per_joint_position_error(predicted, target):
 
 
 def main(args):
-    # Image preprocessing
+    actionformer_feature_extractor = initialize_actionformer(config_file_path=args.config_path)
+    # if not os.path.exists(args.model_path):
+    #     os.makedirs(args.model_path)
+    # image preprocessing
     transform = transforms.Compose([
         transforms.Resize(args.crop_size),
         transforms.ToTensor(),
         transforms.Normalize((0.485, 0.456, 0.406),
-                             (0.229, 0.224, 0.225))])
+            (0.229, 0.224, 0.225))])
+    opt = TestOptions().parse()
+    test_loader = dataloader_full(opt, transform, mode='test')
+    print("Test Data Loading complete", len(test_loader))
+    print("Total test dataset", len(test_loader.dataset))
+    encoder = EncoderCNN(args.embed_feature_dim, actionformer_feature_extractor).to(device)
+    spatio_temporal_transformer = SpatioTemporalTransformer(
+                         args.embed_feature_dim,
+                         args.num_layers).to(device)
 
-    actionformer_feature_extractor = initialize_actionformer(config_file_path=args.config_path)
 
-    with open(args.test_annotation_path, 'rb') as f:
-        annotation = pickle.load(f)
-
-    data_loader = get_loader(annotation, args.image_dir, args.h_dir, args.openpose_dir, transform,
-                             args.batch_size, shuffle=False, num_workers=args.num_workers, seq_length=args.seq_length)
-
-    print("Batch size", len(data_loader.dataset))
-    # Load models
-    encoder = EncoderCNN(args.embed_size, actionformer_feature_extractor).to(device)
-
-    temporal_gcn = TemporalGCN(
-        args.hidden_size,
-        args.seq_length,
-        edge_index,
-        output_dim=75,
-        kernel_size=7).to(device)
-
-    decoder = DecoderRNN(args.embed_size,
-                         args.hidden_size,
-                         args.seq_length,
-                         args.num_layers,
-                         temporal_gcn).to(device)
-
+    decoder = TransformerDecoder(args.hidden_size, args.seq_length,
+                     spatio_temporal_transformer).to(device)
     # Load trained models
     encoder.load_state_dict(torch.load(args.encoder_path))
     decoder.load_state_dict(torch.load(args.decoder_path))
@@ -159,39 +161,65 @@ def main(args):
     decoder.eval()
 
     total_mpjpe = 0
+    total_error = 0.0
+    total_samples = 0
     with torch.no_grad():
-        for i, (images, gt_egoposes, homography, poses2, lengths) in enumerate(data_loader):
+        for i, (batch) in enumerate(test_loader):
+            print("Printing iteration number:", i)
+            # Instead of: for i, (images, homography, gt_egoposes, lengths) in enumerate(data_loader)
+            images = batch['input_rgb_left'].to(device)  # Tensor
+            homography = batch['input_homography'].to(device)  # Tensor
+            gt_egoposes = batch['gt_local_pose'].to(device)  # Tensor
+            gt_egoposes = gt_egoposes*10
+            # lengths = batch['window_size']  # int
             images = images.to(device)
-            gt_egoposes = gt_egoposes.to(device)
-            targets = pack_padded_sequence(gt_egoposes, lengths, batch_first=True)[0]
-            # Forward pass
+            B = images.size(0)
+            print("Image", images.shape)
+            print("Homography", homography.shape)
+            print("Images shape:", images.shape)
+            img_min = images.min().item()
+            img_max = images.max().item()
+            has_nan = torch.isnan(images).any().item()
+            has_inf = torch.isinf(images).any().item()
+            print(f"Batch {i}: image.range=({img_min:.4f}, {img_max:.4f}), NaN={has_nan}, Inf={has_inf}")
+            if has_nan or has_inf:
+                raise ValueError(f"Invalid pixels detected in batch {i}")
             features = encoder(images)
-            outputs = decoder(features, lengths, homography, poses2)
-            print("Outputs:", outputs.shape)
-            print("Targets:", targets.shape)
-            outputs = outputs.view(-1, 75)
-
+            print("Features before decoder shape:", features.shape)
+            lengths = args.seq_length
+            pred, final = decoder(features, lengths, homography)
+            pred = pred
+            final = final
+            print("GT Poses", gt_egoposes.shape)
+            print("Gt Poses min/max:", gt_egoposes.min().item(), gt_egoposes.max().item())
+            print("Outputs Prediction", pred.shape)
+            print("Outputs Final", final.shape)
             # Calculate MPJPE
-            mpjpe = mean_per_joint_position_error(outputs, targets)
-            aligned_outputs, groundtruth = align_skeleton(outputs, targets, None)
-            pa_mpjpe = mean_per_joint_position_error(aligned_outputs, groundtruth)
-            total_mpjpe += mpjpe
-            total_pa_pjpe = pa_mpjpe
-            if (i + 1) % args.log_step == 0:
-                print(f'Batch [{i + 1}/{len(data_loader)}], MPJPE: {mpjpe:.4f}')
+            mpjpe = mean_per_joint_position_error(final, gt_egoposes)
+            # aligned_outputs, groundtruth = align_skeleton(outputs, targets, None)
+            # pa_mpjpe = mean_per_joint_position_error(aligned_outputs, groundtruth)
+            # total_mpjpe += mpjpe
 
-        avg_mpjpe = total_mpjpe / len(data_loader)
-        avg_pa_mpjpe = total_pa_pjpe / len(data_loader)
+            #new_part
+            batch_size = final.size(0)
+            total_error += mpjpe * batch_size
+            total_samples += batch_size
+            # total_pa_pjpe = pa_mpjpe
+            if (i + 1) % args.log_step == 0:
+                print(f'Batch [{i + 1}/{len(test_loader)}], MPJPE: {mpjpe:.4f}')
+
+        avg_mpjpe = total_error / total_samples
+        # avg_pa_mpjpe = total_pa_pjpe / len(data_loader)
         print(f'Average MPJPE: {avg_mpjpe:.4f}')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-
+    print(sys.argv)
     # Model and data paths
     parser.add_argument('--config_path', type=str, default='actionformer/config/anet_tsp.yaml', help='path to the config file')
     parser.add_argument('--encoder_path', type=str, required=True, help='path for trained encoder')
     parser.add_argument('--decoder_path', type=str, required=True, help='path for trained decoder')
-    parser.add_argument('--test_annotation_path', type=str, required=True, help='path for annotation wrapper')
+    # parser.add_argument('--test_annotation_path', type=str, required=True, help='path for annotation wrapper')
 
     # Directories
     parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for resized images')
@@ -199,10 +227,10 @@ if __name__ == '__main__':
     parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for OpenPose JSON files')
 
     # Model parameters
-    parser.add_argument('--embed_size', type=int, default=256, help='dimension of word embedding vectors')
+    parser.add_argument('--embed_feature_dim', type=int, default=256, help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int, default=512, help='dimension of lstm hidden states')
     parser.add_argument('--num_layers', type=int, default=2, help='number of layers in lstm')
-    parser.add_argument('--seq_length', type=int, default=256, help='length of the pose/video sequences')
+    parser.add_argument('--seq_length', type=int, default=32, help='length of the pose/video sequences')
 
     # Other settings
     parser.add_argument('--batch_size', type=int, default=16)
