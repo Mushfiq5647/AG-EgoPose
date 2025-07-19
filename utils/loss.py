@@ -28,24 +28,18 @@ class LossFuncLimb(nn.Module):
     def __init__(self):
         super(LossFuncLimb, self).__init__()
 
-        self.cos_loss = nn.CosineSimilarity(dim=2)
-
     def forward(self, pose_predicted, pose_gt):
         predicted_bone_vector = pose_predicted - pose_predicted[:, self.kinematic_parents, :]
         predicted_bone_vector = predicted_bone_vector[:, 1:, :]
         gt_bone_vector = pose_gt - pose_gt[:, self.kinematic_parents, :]
         gt_bone_vector = gt_bone_vector[:, 1:, :]
 
-
-        cos_loss = self.cos_loss(predicted_bone_vector, gt_bone_vector)
-        cos_loss = torch.mean(torch.sum(cos_loss, dim=1), dim=0)
-
         predicted_bone_length = torch.norm(predicted_bone_vector, dim=-1)
         gt_bone_length = torch.norm(gt_bone_vector, dim=-1)
 
         bone_length_loss = torch.mean(torch.sum((predicted_bone_length - gt_bone_length)**2, dim=1), dim=0)
 
-        return cos_loss, bone_length_loss
+        return bone_length_loss
 
 class LossFuncCosSim(nn.Module):
     list_joints = [

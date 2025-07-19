@@ -7,7 +7,7 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 
 class SpatioTemporalTransformer(nn.Module):
-    def __init__(self, embed_feature_dim, num_layers, num_joints=16, feature_dim=256, num_heads=8, seq_len=256):
+    def __init__(self, embed_feature_dim, num_layers, num_joints=16, feature_dim=640, num_heads=4, seq_len=256):
         super(SpatioTemporalTransformer, self).__init__()
         self.embed_dim = embed_feature_dim
         self.feature_dim = feature_dim
@@ -15,25 +15,25 @@ class SpatioTemporalTransformer(nn.Module):
         self.feature_embedding = nn.Linear(feature_dim, embed_feature_dim)
         self.embed_norm = nn.LayerNorm(embed_feature_dim)
         self.temporal_norm = nn.LayerNorm(embed_feature_dim)
-        self.spatial_norm = nn.LayerNorm(embed_feature_dim)
-        self.final_norm = nn.LayerNorm(embed_feature_dim)
+        self.spatial_norm  = nn.LayerNorm(num_joints)
         enc_layer = nn.TransformerEncoderLayer(
             d_model=self.embed_dim,
             nhead=num_heads,
             dim_feedforward=256,
-            dropout=0.0,
+            dropout=0.1,
             activation='gelu'
         )
-        self.temporal_encoder = nn.TransformerEncoder(enc_layer, num_layers=1)
-        self.output_layer = nn.Linear(embed_feature_dim, self.num_joints * embed_feature_dim)
+        self.temporal_encoder = nn.TransformerEncoder(enc_layer, num_layers=2)
+        self.output_layer = nn.Linear(embed_feature_dim, embed_feature_dim)
         self.joint_embed = nn.Linear(3, embed_feature_dim)
         spat_layer = nn.TransformerEncoderLayer(
-            d_model=embed_feature_dim, nhead=2, dim_feedforward=128,
-            dropout=0.0,
+            d_model=num_joints, nhead=4,
+            dim_feedforward=128,
+            dropout=0.1,
             activation='gelu'
         )
-        self.spatial_refiner = nn.TransformerEncoder(spat_layer, num_layers=1)
-        self.joint_proj = nn.Linear(embed_feature_dim, 3)
+        self.spatial_refiner = nn.TransformerEncoder(spat_layer, num_layers=2)
+        self.joint_proj = nn.Linear(num_joints, 3)
 
     def forward(self, x):
         B, T, F = x.shape
@@ -45,40 +45,39 @@ class SpatioTemporalTransformer(nn.Module):
         emb = self.feature_embedding(x)
         print(f"[A] emb before norm = ({emb.min().item():.4f}, {emb.max().item():.4f})")
         assert not torch.isnan(emb).any(), "NaN after feature_embedding!"
-        # emb = self.embed_norm(emb)
+        emb = self.embed_norm(emb)
         print(f"[A'] emb after norm = ({emb.min().item():.4f}, {emb.max().item():.4f})")
         emb = emb.permute(1, 0, 2)
         t_out = self.temporal_encoder(emb)  # Temporal attention
         t_out = t_out.permute(1, 0, 2)
-        # t_out = self.temporal_norm(t_out)
+        t_out = self.temporal_norm(t_out)
         pred = self.output_layer(t_out)
-        pred = pred.view(B, T, self.num_joints, self.embed_dim)
+        pred = pred.view(B, T, self.num_joints,-1)
         print("Pred min/max", pred.min().item(), pred.max().item())
         print("Pred shape", pred.shape)
 
         #Spatial Refinement
-        pred_frames = pred.view(B * T, self.num_joints, self.embed_dim)  # (B*T, J, 3)
+        pred_frames = pred.view(B * T, self.num_joints,-1)  # (B*T, J, 3)
+        print("Pred shape", pred_frames.shape)
         # joint_emb = self.joint_embed(pred_frames)  # (B*T, J, D)
         # Transformer expects (seq_len, batch, embed)
         jr = pred_frames.permute(1, 0, 2)  # (J, B*T, D)
         jr = self.spatial_refiner(jr)  # (J, B*T, D)
-        assert not torch.isnan(jr).any(), "NaN inside spatial_refiner"
-        assert not torch.isinf(jr).any(), "Inf inside spatial_refiner"
         jr = jr.permute(1, 0, 2)  # (B*T, J, D)
         print("Joint shape", jr.shape)
-        # t_out = self.spatial_norm(jr)
+        jr = self.spatial_norm(jr)
         # 5) Project back to 3D coords
         final_coords = self.joint_proj(jr)  # (B*T, J, 3)
         print("Input shape after joint projection", final_coords.shape)
         final_coords = final_coords.view(B, T, -1, 3)
         print("Final shape:", final_coords.shape)
         print("Final min/max:", final_coords.min().item(), final_coords.max().item())
-        return pred, final_coords
+        return final_coords
 
 
-class EncoderCNN(nn.Module):
+class FeatureEncoder(nn.Module):
     def __init__(self, embed_size, actionformer_model):
-        super(EncoderCNN, self).__init__()
+        super(FeatureEncoder, self).__init__()
         resnet = models.resnet152(pretrained=True)
         modules = list(resnet.children())[:-1]
         self.resnet = nn.Sequential(*modules)
@@ -97,54 +96,6 @@ class EncoderCNN(nn.Module):
             print("Actionformer features min/max:", actionformer_features.min().item(),
                   actionformer_features.max().item())
 
-            # Assuming 'features' is the dictionary containing the keys 'cls_head' and 'final_output'
-            # stem_features = actionformer_features.get('stem')
-            # branch_features = actionformer_features.get('branch')
-
-            def slice_window(features):
-                device = features.device
-                B, C, L_total = features.shape
-                T = images.size(1)
-
-                # permute to (B, L_total, C)
-                feat = features.permute(0, 2, 1)
-
-                # slice/pad
-                if L_total >= T:
-                    feat = feat[:, :T, :]
-                else:
-                    pad_len = T - L_total
-                    padding = torch.zeros(B, pad_len, C, device=feat.device)
-                    feat = torch.cat([feat, padding], dim=1)
-
-                # feat is now (B, T, C)
-                print("Sliced Feature shape", feat.shape)
-                return feat
-
-        # def concat_features(features):
-        # 	if features is not None:
-        # 		processed_features = []
-        #
-        # 		# Iterate through each tuple in branch_features
-        # 		for idx, feature_tuple in enumerate(features):
-        # 			if isinstance(feature_tuple, tuple):
-        # 				# Concatenate the two tensors within each tuple along the last dimension (dim=2)
-        # 				concatenated_tuple_features = torch.cat(feature_tuple, dim=2)
-        # 				processed_features.append(concatenated_tuple_features)
-        #
-        # 		# Concatenate all processed tensors from each tuple along the last dimension (dim=2)
-        # 		final_concatenated_features = torch.cat(processed_features, dim=2)
-        # 		# print("Shape after final concatenation:", final_concatenated_features.shape)
-        # 		return final_concatenated_features
-        #
-        # # concat_stem_features = concat_features(stem_features)
-        # # compact_stem_features = conv_features(concat_stem_features)
-        #
-        # concat_branch_features = concat_features(branch_features)
-        # print("concat_branch_features:", concat_branch_features.shape)
-        # compact_branch_features = slice_window(concat_branch_features)
-        # print("Branch layer shape", compact_branch_features.shape)
-
         images = images.transpose(0, 1)
         for batch in images:
             with torch.no_grad():
@@ -156,13 +107,12 @@ class EncoderCNN(nn.Module):
         print("ResNet feat range:", feat_block.min().item(), feat_block.max().item())
         combined_features = torch.cat((feat_block, actionformer_features), dim=-1)
         print("Feature block", type(feat_block), combined_features.shape)
-        return actionformer_features
+        return combined_features
 
-
-class TransformerDecoder(nn.Module):
+class FeatureDecoder(nn.Module):
     def __init__(self, hidden_size, sequence_length, spatio_temporal_transformer, use_homog=True,
                  use_pose2=True, output_size=48, num_homog=15, homog_size=9, pose2_size=48):
-        super(TransformerDecoder, self).__init__()
+        super(FeatureDecoder, self).__init__()
         # self.embed = nn.Embedding(vocab_size, embed_size)
         self.use_homog = use_homog
         self.use_pose2 = use_pose2
@@ -190,10 +140,9 @@ class TransformerDecoder(nn.Module):
             print("Shape of homography features:", homography.shape)
             embeddings = torch.cat((features, homography), dim=-1)
             print("Embeddings shape", embeddings.shape)
-        pred, final = self.spatio_temporal_transformer(features)
+            final = self.spatio_temporal_transformer(features)
         # print("Output shape", transformer_output.shape)
-
-        return pred, final
+        return final
 
     def sample(self, features, homography, openpose, states=None):
         sampled_ids = []

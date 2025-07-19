@@ -41,7 +41,7 @@ class TrainOptions(BaseOptions):
                                  help='weight for loss_heatmap_rec')
         self.parser.add_argument('--lambda_cos_sim', type=float, default=-1e-2,
                                  help='weight for loss_cos_sim')
-        self.parser.add_argument('--lambda_bone_length', type=float, default=0.5,
+        self.parser.add_argument('--lambda_bone_length', type=float, default=0.1,
                                  help='weight for loss_bone_length')
 
         # ------------------------------ display the results ------------------------------ #

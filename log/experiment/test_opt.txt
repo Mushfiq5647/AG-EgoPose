@@ -2,13 +2,13 @@
 ae_hidden_size: 20
 batch_size: 16
 data_dir: /data/My_Backup/UnrealEgo/scripts/data/UnrealEgoData
-decoder_path: utils/kinect_trained_ckpt_final/decoder-20-1281.ckpt
+decoder_path: utils/kinect_trained_ckpt_final/decoder-20-669.ckpt
 display_id: 1
 display_port: 8097
 display_single_pane_ncols: 0
 display_winsize: 256
 distributed: False
-encoder_path: utils/kinect_trained_ckpt_final/encoder-20-1281.ckpt
+encoder_path: utils/kinect_trained_ckpt_final/encoder-20-669.ckpt
 experiment: False
 experiment_name: experiment
 gpu_ids: [0]
@@ -18,7 +18,7 @@ isTrain: False
 load_size_heatmap: [64, 64]
 load_size_rgb: [256, 256]
 log_dir: log
-model: egoglass
+model: unrealego_autoencoder
 model_name: resnet18
 ntest: inf
 num_heatmap: 15

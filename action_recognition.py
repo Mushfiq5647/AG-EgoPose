@@ -49,15 +49,15 @@ class ActionFormerFeatureExtractor(nn.Module):
         resnet = models.resnet18(pretrained=True)
         modules = list(resnet.children())[:-2]
         self.spatial_backbone = nn.Sequential(*modules)
-        self.spatial_proj = nn.Conv2d(512, 256, kernel_size=1)
+        self.spatial_proj = nn.Conv2d(512, 384, kernel_size=1)
 
         # We'll have len(self.model.backbone.branch) scales to fuse
         n_scales = len(self.model.backbone.branch)
         print('n_scales', n_scales)
         # Channel-projector now needs in_channels = 256 * n_scales
         self.channel_projector = nn.Conv1d(
-            in_channels=256 * n_scales,
-            out_channels=256,
+            in_channels=384 * n_scales,
+            out_channels=384,
             kernel_size=1
         )
 
@@ -68,17 +68,26 @@ class ActionFormerFeatureExtractor(nn.Module):
         x = x.view(B * T, C, H, W)                        # (B*T,3,H,W)
         feat = self.spatial_backbone(x)                   # (B*T,512,H',W')
         feat = self.spatial_proj(feat)                    # (B*T,256,H',W')
-        feat = feat.view(B, T, 256, -1).mean(-1)          # (B,T,256)
+        print('feat.shape', feat.shape)
+        feat = feat.view(B, T, 384, -1).mean(-1)          # (B,T,256)
 
         # 2) Prepare for temporal blocks: (B,256,T)
         x = feat.permute(0, 2, 1)
         if mask is None:
-            mask = torch.ones((B, 256, T), dtype=torch.bool, device=x.device)
+            mask = torch.ones((B, 384, T), dtype=torch.bool, device=x.device)
 
         # 4) Run through branch blocks sequentially, collecting each output
         branch_scales = []
         for blk in self.model.backbone.branch:
-            x, mask = blk(x, mask)    # x: (B,256,L_i)
+            if hasattr(blk.attn, 'window_overlap'):
+                window_overlap = blk.attn.window_overlap
+            else:
+                window_overlap = 1
+            seq_len = x.shape[-1]
+            if seq_len < window_overlap * 2:
+                # print(f"Stopping at seq_len={seq_len} < window_overlap*2={window_overlap * 2}")
+                break  # or continue, if you want to skip this branch but run others
+            x, mask = blk(x, mask)
             branch_scales.append(x)
 
         # 5) Upsample each scale back to length T
@@ -102,7 +111,7 @@ def initialize_actionformer(config_file_path):
     config = load_config(config_file_path)
     print(config['model_name'])
     actionformer_model = make_meta_arch(config['model_name'], **config['model'])
-    checkpoint = torch.load('actionformer/epoch_015.pth.tar', map_location=torch.device('cuda'))
+    checkpoint = torch.load('actionformer/ego4d_egovlp_reproduce/epoch_010.pth.tar', map_location=torch.device('cuda'))
     state_dict = checkpoint['state_dict']
     new_state_dict = {key.replace('module.', ''): value for key, value in state_dict.items()}
     actionformer_model.load_state_dict(new_state_dict)

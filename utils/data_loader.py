@@ -44,16 +44,16 @@ def dataloader_full(opt, transform, mode='train', id=None):
     if opt.model == "egoglass":
         datasets = UnrealEgoStereoWindowDataset(opt, transform, mode, id=id)
     elif opt.model == "unrealego_heatmap_shared":
-        datasets = CreateStereoHeatmapDataset(opt, mode, id=id)
+        datasets = CreateStereoHeatmapDataset(opt, transform, mode, id=id)
     elif opt.model == "unrealego_autoencoder":
-        datasets = UnrealEgoStereoWindowDataset(opt, mode, id=id)
+        datasets = UnrealEgoStereoWindowDataset(opt, transform, mode, id=id)
 
     dataset = torch.utils.data.DataLoader(
         datasets,
         batch_size=opt.batch_size,
         shuffle=shuffle,
         num_workers=int(opt.num_threads),
-        collate_fn=custom_collate_fn,
+        # collate_fn=custom_collate_fn,
         drop_last=drop_last
     )
     print("Data Loading complete", len(dataset))
@@ -61,7 +61,7 @@ def dataloader_full(opt, transform, mode='train', id=None):
 
 
 class UnrealEgoStereoWindowDataset(torch.utils.data.Dataset):
-    def __init__(self, opt, transform, mode, id=None, window_size=32, stride=16, pad=True):
+    def __init__(self, opt, transform, mode, id=None, window_size=128, stride=16, pad=True):
         self.opt = opt
         self.mode = mode
         self.data_list_path = os.path.join(opt.data_dir, mode + '.txt')  # CT\UnrealEgo\static00\UnrealEgoData\train.txt
@@ -135,8 +135,15 @@ class UnrealEgoStereoWindowDataset(torch.utils.data.Dataset):
             data = np.load(path, allow_pickle=True).item()
             left  = torch.from_numpy(data['input_rgb_left']).float()
             right = torch.from_numpy(data['input_rgb_right']).float()
-            left = self.transform(left)
-            right = self.transform(right)
+            
+            # Convert to PIL for transform pipeline that expects PIL input
+            left_pil = T.ToPILImage()(left)
+            right_pil = T.ToPILImage()(right)
+
+            # Apply your transform (Resize → ToTensor → Normalize)
+            if self.transform:
+                left = self.transform(left_pil)
+                right = self.transform(right_pil)
             pose = torch.from_numpy(data['gt_local_pose']).float()
             left_imgs.append(left)
             right_imgs.append(right)

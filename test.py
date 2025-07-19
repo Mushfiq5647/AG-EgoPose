@@ -8,11 +8,13 @@ from options.test_options import TestOptions
 import numpy as np
 import os
 import pickle
+from copy import deepcopy
 from utils.data_loader import dataloader_full
 from utils.build_annotation import Annotation
 from action_recognition import ActionFormerFeatureExtractor
 from action_recognition import initialize_actionformer
-from utils.model import EncoderCNN, TransformerDecoder, SpatioTemporalTransformer
+from utils.model import FeatureEncoder, FeatureDecoder, SpatioTemporalTransformer
+from utils.loss import LossFuncLimb, LossFuncMPJPE  # Add bone length loss import
 from torch.nn.utils.rnn import pack_padded_sequence
 from torch.optim.lr_scheduler import MultiStepLR
 from utils.build_annotation import Annotation
@@ -29,8 +31,6 @@ coords_per_joint = 3
 # Device configuration
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-num_joints = 25
-coords_per_joint = 3
 
 # Define connections between joints (based on the skeleton structure)
 connections = [
@@ -145,14 +145,16 @@ def main(args):
     test_loader = dataloader_full(opt, transform, mode='test')
     print("Test Data Loading complete", len(test_loader))
     print("Total test dataset", len(test_loader.dataset))
-    encoder = EncoderCNN(args.embed_feature_dim, actionformer_feature_extractor).to(device)
+    encoder = FeatureEncoder(args.embed_feature_dim, actionformer_feature_extractor).to(device)
+    mpjpe_loss_func = LossFuncMPJPE().to(device)
     spatio_temporal_transformer = SpatioTemporalTransformer(
                          args.embed_feature_dim,
                          args.num_layers).to(device)
 
 
-    decoder = TransformerDecoder(args.hidden_size, args.seq_length,
+    decoder = FeatureDecoder(args.hidden_size, args.seq_length,
                      spatio_temporal_transformer).to(device)
+    mpjpe_loss_func = LossFuncMPJPE().to(device)
     # Load trained models
     encoder.load_state_dict(torch.load(args.encoder_path))
     decoder.load_state_dict(torch.load(args.decoder_path))
@@ -170,10 +172,10 @@ def main(args):
             images = batch['input_rgb_left'].to(device)  # Tensor
             homography = batch['input_homography'].to(device)  # Tensor
             gt_egoposes = batch['gt_local_pose'].to(device)  # Tensor
-            gt_egoposes = gt_egoposes*10
+            gt_egoposes = gt_egoposes/10
             # lengths = batch['window_size']  # int
             images = images.to(device)
-            B = images.size(0)
+            batch_size = images.size(0)
             print("Image", images.shape)
             print("Homography", homography.shape)
             print("Images shape:", images.shape)
@@ -187,23 +189,23 @@ def main(args):
             features = encoder(images)
             print("Features before decoder shape:", features.shape)
             lengths = args.seq_length
-            pred, final = decoder(features, lengths, homography)
-            pred = pred
-            final = final
+            final = decoder(features, lengths, homography)
             print("GT Poses", gt_egoposes.shape)
             print("Gt Poses min/max:", gt_egoposes.min().item(), gt_egoposes.max().item())
-            print("Outputs Prediction", pred.shape)
             print("Outputs Final", final.shape)
+            B, T = final.shape[:2]
+            final_reshaped = final.reshape(B*T, num_joints, 3)
+            gt_reshaped = gt_egoposes.reshape(B*T, num_joints, 3)
             # Calculate MPJPE
-            mpjpe = mean_per_joint_position_error(final, gt_egoposes)
+            mpjpe = mpjpe_loss_func(final_reshaped, gt_reshaped)
             # aligned_outputs, groundtruth = align_skeleton(outputs, targets, None)
             # pa_mpjpe = mean_per_joint_position_error(aligned_outputs, groundtruth)
             # total_mpjpe += mpjpe
 
             #new_part
             batch_size = final.size(0)
-            total_error += mpjpe * batch_size
-            total_samples += batch_size
+            total_error += mpjpe * B * T
+            total_samples += B*T
             # total_pa_pjpe = pa_mpjpe
             if (i + 1) % args.log_step == 0:
                 print(f'Batch [{i + 1}/{len(test_loader)}], MPJPE: {mpjpe:.4f}')
@@ -216,7 +218,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     print(sys.argv)
     # Model and data paths
-    parser.add_argument('--config_path', type=str, default='actionformer/config/anet_tsp.yaml', help='path to the config file')
+    parser.add_argument('--config_path', type=str, default='actionformer/config/ego4D_egovlp.yaml', help='path to the config file')
     parser.add_argument('--encoder_path', type=str, required=True, help='path for trained encoder')
     parser.add_argument('--decoder_path', type=str, required=True, help='path for trained decoder')
     # parser.add_argument('--test_annotation_path', type=str, required=True, help='path for annotation wrapper')
