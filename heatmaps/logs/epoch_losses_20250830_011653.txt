@@ -1,0 +1,38 @@
+Epoch-wise Training Summary - 20250830_011653
+============================================================
+Training Args: Namespace(backbone='resnet18', num_joints=15, init_imagenet=False, learning_rate=0.001, clip_value=1.0, num_epochs=25, batch_size=8, num_workers=4, log_step=10, save_interval=5, crop_size=224)
+============================================================
+
+Epoch | Train Loss | Confidence | LR
+--------------------------------------------------
+    1 |   0.014930 |     0.0309 | 0.000100
+    2 |        nan |        nan | 0.000100
+    3 |        nan |        nan | 0.000100
+    4 |        nan |        nan | 0.000100
+    5 |        nan |        nan | 0.000100
+    6 |        nan |        nan | 0.000100
+    7 |        nan |        nan | 0.000100
+    8 |        nan |        nan | 0.000100
+    9 |        nan |        nan | 0.000100
+   10 |        nan |        nan | 0.000100
+   11 |        nan |        nan | 0.000100
+   12 |        nan |        nan | 0.000100
+   13 |        nan |        nan | 0.000100
+   14 |        nan |        nan | 0.000100
+   15 |        nan |        nan | 0.000100
+   16 |        nan |        nan | 0.000100
+   17 |        nan |        nan | 0.000100
+   18 |        nan |        nan | 0.000100
+   19 |        nan |        nan | 0.000100
+   20 |        nan |        nan | 0.000100
+   21 |        nan |        nan | 0.000100
+   22 |        nan |        nan | 0.000100
+   23 |        nan |        nan | 0.000100
+   24 |        nan |        nan | 0.000100
+   25 |        nan |        nan | 0.000100
+
+==================================================
+Best Epoch: 1
+Best Train Loss: 0.014930
+Final Confidence: nan
+Training completed at: 2025-09-01 16:11:55

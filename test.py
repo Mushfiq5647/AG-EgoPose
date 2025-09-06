@@ -1,235 +1,262 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 import argparse
-import torch
-import sys
-import torch.nn as nn
-import tqdm
-from options.test_options import TestOptions
-import numpy as np
 import os
-import pickle
-from copy import deepcopy
-from utils.data_loader import dataloader_full
-from utils.build_annotation import Annotation
-from action_recognition import ActionFormerFeatureExtractor
-from action_recognition import initialize_actionformer
-from utils.model import FeatureEncoder, FeatureDecoder, SpatioTemporalTransformer
-from utils.loss import LossFuncLimb, LossFuncMPJPE  # Add bone length loss import
-from torch.nn.utils.rnn import pack_padded_sequence
-from torch.optim.lr_scheduler import MultiStepLR
-from utils.build_annotation import Annotation
+import sys
+import numpy as np
+import torch
+import torch.nn.functional as F
 from torchvision import transforms
+from torch.cuda.amp import autocast
+
+from action_recognition import initialize_actionformer
+from options.test_options import TestOptions
+from utils.data_loader import dataloader_full
+from utils.cross_attention_model import HeatmapToJointFeatures
+from utils.cross_attention_model import SpatialJointTransformer
+from utils.loss import LossFuncMPJPE
+from heatmaps.network_heatmap import HeatMap_Network
+from utils.model import FeatureEncoder, PoseDecoder
+from utils.util import batch_compute_similarity_transform_torch
+from utils.pose_evaluation import calculate_ba_mpjpe
+import socket
+
+print("Running on host:", socket.gethostname())
 torch.set_printoptions(threshold=torch.inf)
 torch.manual_seed(7)
+
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-print("OS:", os.cpu_count())
-print("Working On:",device)
+print("Using device:", device)
+if torch.cuda.is_available():
+    print("Current CUDA device index:", torch.cuda.current_device())
+    print("Device name:", torch.cuda.get_device_name(torch.cuda.current_device()))
+
+np.set_printoptions(precision=6, suppress=True)
 # Number of joints and coordinates per joint
-num_joints = 16
-coords_per_joint = 3
-# Device configuration
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-
-# Define connections between joints (based on the skeleton structure)
-connections = [
-    (0, 12), (0, 16), (0, 1),  # SpineBase to HipLeft, HipRight, SpineMid
-    (1, 20),  # SpineMid to SpineShoulder
-    (20, 2),  # SpineShoulder to Neck
-    (2, 3),  # Neck to Head
-    (20, 4), (4, 5), (5, 6), (6, 7), (6, 22), (7, 21),  # Left arm
-    (20, 8), (8, 9), (9, 10), (10, 11), (10, 24), (11, 23),  # Right arm
-    (12, 13), (13, 14), (14, 15),  # Left leg
-    (16, 17), (17, 18), (18, 19),  # Right leg
-]
-
-# Create the edge_index
-edge_index = [[], []]
-
-# For each connection, append the corresponding indices for all 3D coordinates (x, y, z)
-for joint_a, joint_b in connections:
-    for j in range(coords_per_joint):
-        edge_index[0].append(joint_a * coords_per_joint + j)  # Source joint's coordinate index
-        edge_index[1].append(joint_b * coords_per_joint + j)  # Target joint's coordinate index
-
-# Convert to tensor
-edge_index = torch.tensor(edge_index, dtype=torch.long)
-
-def umeyama(P, Q):
-    assert P.shape == Q.shape
-    n, dim = P.shape
-
-    centeredP = P - P.mean(axis=0)
-    centeredQ = Q - Q.mean(axis=0)
-
-    C = np.dot(np.transpose(centeredP), centeredQ) / n
-
-
-
-    V, S, W = np.linalg.svd(C)
-    d = (np.linalg.det(V) * np.linalg.det(W)) < 0.0
-
-    if d:
-        S[-1] = -S[-1]
-        V[:, -1] = -V[:, -1]
-
-    R = np.dot(V, W)
-
-    varP = np.var(P, axis=0).sum()
-    c = 1/varP * np.sum(S) # scale factor
-
-    t = Q.mean(axis=0) - P.mean(axis=0).dot(c*R)
-
-    return c, R, t
-def align_skeleton(estimated_seq, gt_seq, skeleton_model=None, scale=True):
-    estimated_seq = deepcopy(np.asarray(estimated_seq))
-    gt_seq = deepcopy(np.asarray(gt_seq))
-    if skeleton_model is not None:
-        for i in range(len(estimated_seq)):
-            estimated_seq[i] = skeleton_model.skeleton_resize_single(
-                estimated_seq[i],
-                bone_length_file='utils/fisheye/mean3D.mat')
-        for i in range(len(gt_seq)):
-            gt_seq[i] = skeleton_model.skeleton_resize_single(
-                gt_seq[i],
-                bone_length_file='utils/fisheye/mean3D.mat')
-
-    aligned_pose_list = np.zeros_like(estimated_seq)
-    for s in range(estimated_seq.shape[0]):
-        pose_p = estimated_seq[s]
-        pose_gt_bs = gt_seq[s]
-        if scale is False:
-            # if scale is False, firstly align the center of each pose
-            pose_p_center = np.mean(pose_p, axis=0)
-            pose_gt_center = np.mean(pose_gt_bs, axis=0)
-            pose_p -= pose_p_center
-            pose_gt_bs -= pose_gt_center
-
-        c, R, t = umeyama(pose_p, pose_gt_bs)
-        if scale is True:
-            pose_p = pose_p.dot(R) * c + t
-        else:
-            pose_p = pose_p.dot(R) + t
-        aligned_pose_list[s] = pose_p
-
-    return aligned_pose_list, gt_seq
-
-def mean_per_joint_position_error(predicted, target):
-    # Reshape the data from (batch_size, sequence_length, 75) to (batch_size, sequence_length, 25, 3)
-    print(f"Predicted shape: {predicted.shape}")
-    print(f"Target shape: {target.shape}")
-
-    # predicted = predicted.view(predicted.size(0), 16, 3)
-    # target = target.view(target.size(0), 16, 3)
-
-    # Compute the Euclidean distance (L2 norm) between predicted and target for each joint
-    error = torch.norm(predicted - target, dim=-1)  # L2 norm along the last dimension (x, y, z)
-
-    # Compute the mean over all joints, frames, and batches
-    mpjpe = torch.mean(error)  # Average over all joints and frames
-    return mpjpe.item()
-
+num_joints = 15
+# coords_per_joint = 3
+# # Device configuration
+#
+# # Define connections between joints (based on the skeleton structure)
+# connections = [
+#     (0, 12), (0, 16), (0, 1),  # SpineBase to HipLeft, HipRight, SpineMid
+#     (1, 20),  # SpineMid to SpineShoulder
+#     (20, 2),  # SpineShoulder to Neck
+#     (2, 3),  # Neck to Head
+#     (20, 4), (4, 5), (5, 6), (6, 7), (6, 22), (7, 21),  # Left arm
+#     (20, 8), (8, 9), (9, 10), (10, 11), (10, 24), (11, 23),  # Right arm
+#     (12, 13), (13, 14), (14, 15),  # Left leg
+#     (16, 17), (17, 18), (18, 19),  # Right leg
+# ]
+#
+# # Create the edge_index
+# edge_index = [[], []]
+#
+# # For each connection, append the corresponding indices for all 3D coordinates (x, y, z)
+# for joint_a, joint_b in connections:
+#     for j in range(coords_per_joint):
+#         edge_index[0].append(joint_a * coords_per_joint + j)  # Source joint's coordinate index
+#         edge_index[1].append(joint_b * coords_per_joint + j)  # Target joint's coordinate index
+#
+# # Convert to tensor
+# edge_index = torch.tensor(edge_index, dtype=torch.long)
 
 def main(args):
     actionformer_feature_extractor = initialize_actionformer(config_file_path=args.config_path)
-    # if not os.path.exists(args.model_path):
-    #     os.makedirs(args.model_path)
-    # image preprocessing
+    
+    # Image preprocessing (same as train.py)
     transform = transforms.Compose([
-        transforms.Resize(args.crop_size),
+        transforms.Resize((args.crop_size, args.crop_size), antialias=True),
         transforms.ToTensor(),
-        transforms.Normalize((0.485, 0.456, 0.406),
-            (0.229, 0.224, 0.225))])
+        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+    ])
+    
     opt = TestOptions().parse()
     test_loader = dataloader_full(opt, transform, mode='test')
     print("Test Data Loading complete", len(test_loader))
     print("Total test dataset", len(test_loader.dataset))
-    encoder = FeatureEncoder(args.embed_feature_dim, actionformer_feature_extractor).to(device)
-    mpjpe_loss_func = LossFuncMPJPE().to(device)
-    spatio_temporal_transformer = SpatioTemporalTransformer(
-                         args.embed_feature_dim,
-                         args.num_layers).to(device)
 
 
-    decoder = FeatureDecoder(args.hidden_size, args.seq_length,
-                     spatio_temporal_transformer).to(device)
-    mpjpe_loss_func = LossFuncMPJPE().to(device)
+    # Initialize models (same as train.py)
+    net_heatmap = HeatMap_Network(opt, model_name='resnet18').to(device)
+    heatmap_embedding = HeatmapToJointFeatures(heatmap_size=128, feature_dim=128, method='conv_pool').to(device)
+    encoder = FeatureEncoder(actionformer_feature_extractor).to(device)
+    spatial_joint_transformer = SpatialJointTransformer(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
+    pose_decoder = PoseDecoder(motion_dim=384, joint_dim=128, out_dim=3).to(device)
+    
+    # Load pre-trained 2D heatmap network
+    if os.path.exists(args.heatmap_trained_path):
+        print(f"Loading pre-trained 2D heatmap network from {args.heatmap_trained_path}")
+        net_heatmap.load_state_dict(torch.load(args.heatmap_trained_path, map_location=device))
+        net_heatmap.eval()
+        # Freeze the heatmap network
+        for param in net_heatmap.parameters():
+            param.requires_grad = False
+        print("2D heatmap network loaded and frozen")
+    else:
+        print(f"Warning: Pre-trained heatmap model not found at {args.heatmap_trained_path}")
+    
     # Load trained models
-    encoder.load_state_dict(torch.load(args.encoder_path))
-    decoder.load_state_dict(torch.load(args.decoder_path))
+    print(f"Loading encoder from {args.encoder_path}")
+    encoder.load_state_dict(torch.load(args.encoder_path, map_location=device))
+    
+    print(f"Loading pose decoder from {args.decoder_path}")
+    pose_decoder.load_state_dict(torch.load(args.decoder_path, map_location=device))
+    
+    print(f"Loading heatmap embedding from {args.heatmap_path}")
+    heatmap_embedding.load_state_dict(torch.load(args.heatmap_path, map_location=device))
+    
+    print(f"Loading spatial transformer from {args.spatial_transformer_path}")
+    spatial_joint_transformer.load_state_dict(torch.load(args.spatial_transformer_path, map_location=device))
 
+    # Set all models to evaluation mode
+    net_heatmap.eval()
     encoder.eval()
-    decoder.eval()
+    pose_decoder.eval()
+    heatmap_embedding.eval()
+    spatial_joint_transformer.eval()
+    
+    print("All models loaded and set to evaluation mode")
 
+    # Initialize loss functions
+    mpjpe_loss_func = LossFuncMPJPE().to(device)
+    
+    # Initialize evaluation metrics
     total_mpjpe = 0
-    total_error = 0.0
+    total_procrustes_error = 0.0
+    total_ba_mpjpe_error = 0.0
     total_samples = 0
+    
+    print("Starting evaluation...")
     with torch.no_grad():
         for i, (batch) in enumerate(test_loader):
             print("Printing iteration number:", i)
-            # Instead of: for i, (images, homography, gt_egoposes, lengths) in enumerate(data_loader)
-            images = batch['input_rgb_left'].to(device)  # Tensor
-            homography = batch['input_homography'].to(device)  # Tensor
-            gt_egoposes = batch['gt_local_pose'].to(device)  # Tensor
-            gt_egoposes = gt_egoposes/10
-            # lengths = batch['window_size']  # int
-            images = images.to(device)
-            batch_size = images.size(0)
-            print("Image", images.shape)
-            print("Homography", homography.shape)
-            print("Images shape:", images.shape)
-            img_min = images.min().item()
-            img_max = images.max().item()
-            has_nan = torch.isnan(images).any().item()
-            has_inf = torch.isinf(images).any().item()
-            print(f"Batch {i}: image.range=({img_min:.4f}, {img_max:.4f}), NaN={has_nan}, Inf={has_inf}")
-            if has_nan or has_inf:
-                raise ValueError(f"Invalid pixels detected in batch {i}")
-            features = encoder(images)
-            print("Features before decoder shape:", features.shape)
-            lengths = args.seq_length
-            final = decoder(features, lengths, homography)
+            images = batch['input_rgb'].to(device)  # Tensor
+            B, T, _, H_img, W_img = images.shape
+            H_hm, W_hm = 128, 128
+            gt_egoposes = batch['gt_local_pose'].to(device)
+            
+            # MEMORY OPTIMIZATION: Process heatmaps in smaller chunks (same as train.py)
+            chunk_size = 16  # Process 16 frames at a time instead of 64
+            all_heatmaps = []
+            
+            with torch.no_grad():
+                for t in range(0, T, chunk_size):
+                    end_t = min(t + chunk_size, T)
+                    img_chunk = images[:, t:end_t].contiguous()  # [B, chunk_size, 3, H, W]
+                    img_chunk_flat = img_chunk.view(-1, 3, H_img, W_img)  # [B*chunk_size, 3, H, W]
+                    
+                    hm_chunk = net_heatmap(img_chunk_flat)  # [B*chunk_size, J, H_hm, W_hm]
+                    hm_chunk = F.interpolate(hm_chunk, size=(H_hm, W_hm), mode='bilinear', align_corners=True)
+                    hm_chunk = hm_chunk.view(B, end_t - t, 15, H_hm, W_hm)
+                    all_heatmaps.append(hm_chunk)
+                    
+            heatmaps = torch.cat(all_heatmaps, dim=1)  # [B, T, 15, H_hm, W_hm]
+            
+            # Forward pass without autocast for full precision
+            motion_features = encoder(images)
+            
+            # MEMORY OPTIMIZATION: Process heatmap embedding in chunks
+            chunk_size = 8  # Process 8 frames at a time for heatmap embedding
+            all_heatmap_features = []
+            
+            for t in range(0, T, chunk_size):
+                end_t = min(t + chunk_size, T)
+                hm_chunk = heatmaps[:, t:end_t].contiguous()  # [B, chunk_size, 15, 128, 128]
+                hm_features_chunk = heatmap_embedding(hm_chunk)  # [B, chunk_size, 15, 128]
+                all_heatmap_features.append(hm_features_chunk)
+            
+            heatmap_features = torch.cat(all_heatmap_features, dim=1)  # [B, T, 15, 128]
+            print("Passed heatmap_features")
+            
+            spatial_joint_features = spatial_joint_transformer(heatmap_features)
+            print("Passed spatial_joint_features")
+            pose_logits = pose_decoder(spatial_joint_features, motion_features)
+            print("Passed decoder")
+            
+            # Reshape to pose format
+            final = pose_logits.view(B, T, num_joints, 3)
+            
+            # Reshape for loss computation
+            final_reshaped = final.reshape(B * T, num_joints, 3)
+            gt_reshaped = gt_egoposes.reshape(B * T, num_joints, 3)
+            
+            # Compute MPJPE loss
+            mpjpe_loss = mpjpe_loss_func(final_reshaped, gt_reshaped)
+            
+            print(f"MPJPE: {mpjpe_loss:.4f}")
+            
             print("GT Poses", gt_egoposes.shape)
             print("Gt Poses min/max:", gt_egoposes.min().item(), gt_egoposes.max().item())
             print("Outputs Final", final.shape)
-            B, T = final.shape[:2]
-            final_reshaped = final.reshape(B*T, num_joints, 3)
-            gt_reshaped = gt_egoposes.reshape(B*T, num_joints, 3)
-            # Calculate MPJPE
-            mpjpe = mpjpe_loss_func(final_reshaped, gt_reshaped)
-            # aligned_outputs, groundtruth = align_skeleton(outputs, targets, None)
-            # pa_mpjpe = mean_per_joint_position_error(aligned_outputs, groundtruth)
-            # total_mpjpe += mpjpe
 
-            #new_part
-            batch_size = final.size(0)
-            total_error += mpjpe * B * T
-            total_samples += B*T
-            # total_pa_pjpe = pa_mpjpe
-            if (i + 1) % args.log_step == 0:
-                print(f'Batch [{i + 1}/{len(test_loader)}], MPJPE: {mpjpe:.4f}')
+            # Calculate Procrustes alignment for PA-MPJPE
+            S1_hat = batch_compute_similarity_transform_torch(final_reshaped, gt_reshaped)
+            
+            # Calculate PA-MPJPE (Procrustes Aligned MPJPE)
+            pa_mpjpe = mpjpe_loss_func(S1_hat, gt_reshaped)
+            
+            # Calculate BA-MPJPE using new Umeyama approach
+            final_np = final_reshaped.detach().cpu().numpy()
+            gt_np = gt_reshaped.detach().cpu().numpy()
+            ba_mpjpe = calculate_ba_mpjpe(final_np, gt_np, skeleton_model=None)
+            
+            print(f'Batch [{i + 1}/{len(test_loader)}], MPJPE: {mpjpe_loss:.4f}, PA-MPJPE: {pa_mpjpe:.4f}, BA-MPJPE: {ba_mpjpe:.4f}')
+            
+            # Accumulate errors
+            total_mpjpe += mpjpe_loss.item() * B * T
+            total_procrustes_error += pa_mpjpe.item() * B * T
+            total_ba_mpjpe_error += ba_mpjpe * B * T
+            total_samples += B * T
 
-        avg_mpjpe = total_error / total_samples
-        # avg_pa_mpjpe = total_pa_pjpe / len(data_loader)
+        # Calculate final averages
+        avg_mpjpe = total_mpjpe / total_samples
+        avg_pa_mpjpe = total_procrustes_error / total_samples
+        avg_ba_mpjpe = total_ba_mpjpe_error / total_samples
+        
+        print(f'\n=== Final Evaluation Results ===')
         print(f'Average MPJPE: {avg_mpjpe:.4f}')
+        print(f'Average PA-MPJPE: {avg_pa_mpjpe:.4f}')
+        print(f'Average BA-MPJPE: {avg_ba_mpjpe:.4f}')
+        print(f'Total samples evaluated: {total_samples}')
+        
+        # Save results to file
+        results_file = 'test_results.txt'
+        with open(results_file, 'w') as f:
+            f.write(f"Test Results Summary\n")
+            f.write(f"===================\n")
+            f.write(f"Average MPJPE: {avg_mpjpe:.4f}\n")
+            f.write(f"Average PA-MPJPE: {avg_pa_mpjpe:.4f}\n")
+            f.write(f"Average BA-MPJPE: {avg_ba_mpjpe:.4f}\n")
+            f.write(f"Total samples evaluated: {total_samples}\n")
+        
+        print(f"Results saved to {results_file}")
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     print(sys.argv)
     # Model and data paths
-    parser.add_argument('--config_path', type=str, default='actionformer/config/ego4D_egovlp.yaml', help='path to the config file')
+    parser.add_argument('--config_path', type=str, default='actionformer/config/ego4D_egovlp.yaml',
+                        help='path to the config file')
     parser.add_argument('--encoder_path', type=str, required=True, help='path for trained encoder')
     parser.add_argument('--decoder_path', type=str, required=True, help='path for trained decoder')
+    parser.add_argument('--heatmap_trained_path', type=str, required=True, help='path for trained 2D heatmap')
+    parser.add_argument('--heatmap_path', type=str, required=True, help='path for trained heatmap embedding')
+    parser.add_argument('--spatial_transformer_path', type=str, required=True, help='path for trained spatial transformer')
     # parser.add_argument('--test_annotation_path', type=str, required=True, help='path for annotation wrapper')
 
     # Directories
-    parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for resized images')
+    parser.add_argument('--image_dir', type=str, default='you2me_ds_release_kinect/kinect',
+                        help='directory for resized images')
     parser.add_argument('--h_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for homography')
-    parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect', help='directory for OpenPose JSON files')
+    parser.add_argument('--openpose_dir', type=str, default='you2me_ds_release_kinect/kinect',
+                        help='directory for OpenPose JSON files')
 
     # Model parameters
     parser.add_argument('--embed_feature_dim', type=int, default=256, help='dimension of word embedding vectors')
+    parser.add_argument('--hm_embed_dim', type=int, default=128, help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int, default=512, help='dimension of lstm hidden states')
     parser.add_argument('--num_layers', type=int, default=2, help='number of layers in lstm')
     parser.add_argument('--seq_length', type=int, default=32, help='length of the pose/video sequences')

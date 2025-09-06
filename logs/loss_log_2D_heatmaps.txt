@@ -1,0 +1,1 @@
+epoch,train_loss,train_mse,mean_confidence,learning_rate

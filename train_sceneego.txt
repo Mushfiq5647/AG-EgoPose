@@ -1,0 +1,5 @@
+/data/My_Backup/Dataset/SceneEgo_train/train/diogo1
+/data/My_Backup/Dataset/SceneEgo_train/train/diogo2
+/data/My_Backup/Dataset/SceneEgo_train/train/jian1
+/data/My_Backup/Dataset/SceneEgo_train/train/jian2
+/data/My_Backup/Dataset/SceneEgo_train/train/pranay2

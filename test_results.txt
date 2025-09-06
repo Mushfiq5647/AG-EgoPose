@@ -1,0 +1,6 @@
+Test Results Summary
+===================
+Average MPJPE: 1.2970
+Average PA-MPJPE: 0.1021
+Average BA-MPJPE: 0.0916
+Total samples evaluated: 12032

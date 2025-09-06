@@ -31,7 +31,7 @@ class TrainOptions(BaseOptions):
         self.parser.add_argument('--weight_decay', type=float, default=0.0,
                                  help='weight decay')
 
-        self.parser.add_argument('--lambda_mpjpe', type=float, default=1.0,
+        self.parser.add_argument('--lambda_mpjpe', type=float, default=10.0,
                                  help='weight for loss_mpjpe')
         self.parser.add_argument('--lambda_heatmap', type=float, default=1.0,
                                  help='weight for loss_heatmap')
@@ -57,9 +57,7 @@ class TrainOptions(BaseOptions):
                                  help='frequency of saving checkpoints at the end of epochs')
         self.parser.add_argument('--model_path', type=str, required=True, help='path for saving trained models')
         self.parser.add_argument('--annotation_path', type=str, required=True, help='path for annotation wrapper')
-        
+        self.parser.add_argument('--heatmap_trained_path', type=str, required=True, help='path for annotation wrapper')
+
         # ------------------------------ others ------------------------------ #
-
-
-
         self.isTrain = True

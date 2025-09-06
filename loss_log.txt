@@ -1,0 +1,1 @@
+Epoch, Train_MPJPE, Train_Cos, Train_Bone, Train_Total, Best_Total 

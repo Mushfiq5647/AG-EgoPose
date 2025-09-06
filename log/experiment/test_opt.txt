@@ -1,24 +1,26 @@
 --------------Options--------------
 ae_hidden_size: 20
-batch_size: 16
+batch_size: 8
 data_dir: /data/My_Backup/UnrealEgo/scripts/data/UnrealEgoData
-decoder_path: utils/kinect_trained_ckpt_final/decoder-20-669.ckpt
+decoder_path: ./utils/trained_egopwfull_mo2cap2/pose-decoder-040.ckpt
 display_id: 1
 display_port: 8097
 display_single_pane_ncols: 0
 display_winsize: 256
 distributed: False
-encoder_path: utils/kinect_trained_ckpt_final/encoder-20-669.ckpt
+encoder_path: ./utils/trained_egopwfull_mo2cap2/encoder-040.ckpt
 experiment: False
 experiment_name: experiment
 gpu_ids: [0]
+heatmap_path: ./utils/trained_egopwfull_mo2cap2/heatmap_embedding-040.ckpt
+heatmap_trained_path: utils/trained_heatmaps/heatmap_best.ckpt
 init_ImageNet: False
 init_type: kaiming
 isTrain: False
 load_size_heatmap: [64, 64]
 load_size_rgb: [256, 256]
 log_dir: log
-model: unrealego_autoencoder
+model: egoglobal
 model_name: resnet18
 ntest: inf
 num_heatmap: 15
@@ -30,6 +32,7 @@ project_name: project_name
 save_dir_pose: results
 save_eval_pose: False
 save_eval_pose_freq: 2000
+spatial_transformer_path: ./utils/trained_egopwfull_mo2cap2/spatial_transformer-040.ckpt
 use_amp: False
 use_slurm: False
 which_epoch: latest

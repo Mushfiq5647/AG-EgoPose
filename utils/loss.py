@@ -6,25 +6,12 @@ from math import exp
 
 
 class LossFuncLimb(nn.Module):
-    list_joints = [
-            "head",
-            "neck_01",
-            "upperarm_l",
-            "upperarm_r",
-            "lowerarm_l",
-            "lowerarm_r",
-            "hand_l",
-            "hand_r",
-            "thigh_l",
-            "thigh_r",
-            "calf_l",
-            "calf_r",
-            "foot_l",
-            "foot_r",
-            "ball_l",
-            "ball_r"
-        ]
-    kinematic_parents = [0, 0, 1, 1, 2, 3, 4, 5, 2, 3, 8, 9, 10, 11, 12, 13]
+    list_joints = ["Neck", "Right_shoulder", "Right_elbow", "Right_wrist", "Left_shoulder", "Left_elbow",
+                        "Left_wrist", "Right_hip", "Right_knee", "Right_ankle", "Right_foot", "Left_hip",
+                        "Left_knee", "Left_ankle", "Left_foot"]
+    lines = [(0, 1), (0, 4), (1, 2), (2, 3), (4, 5), (5, 6), (1, 7), (4, 11), (7, 8), (8, 9), (9, 10),
+             (11, 12), (12, 13), (13, 14), (7, 11)]
+    kinematic_parents = [0, 0, 1, 2, 0, 4, 5, 1, 7, 8, 9, 4, 11, 12, 13]
     def __init__(self):
         super(LossFuncLimb, self).__init__()
 
@@ -42,25 +29,12 @@ class LossFuncLimb(nn.Module):
         return bone_length_loss
 
 class LossFuncCosSim(nn.Module):
-    list_joints = [
-            "head",
-            "neck_01",
-            "upperarm_l",
-            "upperarm_r",
-            "lowerarm_l",
-            "lowerarm_r",
-            "hand_l",
-            "hand_r",
-            "thigh_l",
-            "thigh_r",
-            "calf_l",
-            "calf_r",
-            "foot_l",
-            "foot_r",
-            "ball_l",
-            "ball_r"
-        ]
-    kinematic_parents = [0, 0, 1, 1, 2, 3, 4, 5, 2, 3, 8, 9, 10, 11, 12, 13]
+    list_joints = ["Neck", "Right_shoulder", "Right_elbow", "Right_wrist", "Left_shoulder", "Left_elbow",
+                        "Left_wrist", "Right_hip", "Right_knee", "Right_ankle", "Right_foot", "Left_hip",
+                        "Left_knee", "Left_ankle", "Left_foot"]
+    lines = [(0, 1), (0, 4), (1, 2), (2, 3), (4, 5), (5, 6), (1, 7), (4, 11), (7, 8), (8, 9), (9, 10),
+             (11, 12), (12, 13), (13, 14), (7, 11)]
+    kinematic_parents = [0, 0, 1, 2, 0, 4, 5, 1, 7, 8, 9, 4, 11, 12, 13]
     def __init__(self):
         super(LossFuncCosSim, self).__init__()
 

@@ -1,0 +1,2 @@
+/data/My_Backup/Dataset/Mocap2-20231112T183152Z-001/Mocap2/test_data/test_data/weipeng_studio
+/data/My_Backup/Dataset/Mocap2-20231112T183152Z-001/Mocap2/test_data/test_data/olek_outdoor

@@ -1,6 +1,5 @@
 --------------Options--------------
 ae_hidden_size: 20
-annotation_path: ./vocab/train_annotation.pkl
 batch_size: 8
 continue_train: False
 data_dir: /data/My_Backup/UnrealEgo/scripts/data/UnrealEgoData
@@ -14,7 +13,6 @@ epoch_count: 1
 experiment: False
 experiment_name: experiment
 gpu_ids: [0]
-heatmap_trained_path: utils/trained_heatmaps/heatmap-best.ckpt
 init_ImageNet: False
 init_type: kaiming
 isTrain: True
@@ -22,7 +20,7 @@ lambda_bone_length: 0.1
 lambda_cos_sim: -0.01
 lambda_heatmap: 1.0
 lambda_heatmap_rec: 0.001
-lambda_mpjpe: 10.0
+lambda_mpjpe: 2.0
 lambda_pose: 0.1
 load_size_heatmap: [64, 64]
 load_size_rgb: [256, 256]
@@ -30,9 +28,8 @@ log_dir: log
 lr: 0.001
 lr_decay_iters_step: 4
 lr_policy: lambda
-model: combined
+model: egopw
 model_name: resnet18
-model_path: ./utils/model.py
 niter: 0
 niter_decay: 0
 num_heatmap: 15

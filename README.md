@@ -42,11 +42,13 @@ for your each of your training sequences.
 
 Then run the following command:
 
-`python train.py --model_path ./utils/model.py --annotation_path ./vocab/train_annotation.pkl`
+`python train.py --model_path ./utils/model.py --annotation_path ./vocab/train_annotation.pkl --heatmap_trained_path utils/trained_heatmaps/heatmap-025.ckpt`
 
 
 For testing:
-`python test.py --encoder_path utils/kinect_trained_ckpt_final/encoder-20-1281.ckpt --decoder_path utils/kinect_trained_ckpt_final/decoder-20-1281.ckpt`
+`python test.py --encoder_path ./utils/mo2cap2/encoder-finetune-20-848.ckpt --decoder_path ./utils/mo2cap2/pose-decoder-finetune-20-848.ckpt --heatmap_trained_path utils/trained_heatmaps/heatmap_best.ckpt --heatmap_path ./utils/mo2cap2/heatmap_embedding-finetune-20-848.ckpt --spatial_transformer_path ./utils/mo2cap2/spatial_transformer-finetune-20-848.ckpt`
+`python test.py --encoder_path ./utils/sceneego/encoder-finetune-20-113.ckpt --decoder_path ./utils/sceneego/pose-decoder-finetune-20-113.ckpt --heatmap_trained_path utils/trained_heatmaps/heatmap_best.ckpt --heatmap_path ./utils/sceneego/heatmap_embedding-finetune-20-113.ckpt --spatial_transformer_path ./utils/sceneego/spatial_transformer-finetune-20-113.ckpt`
+`python test.py --encoder_path ./utils/trained_egopwfull_mo2cap2/encoder-040.ckpt --decoder_path ./utils/trained_egopwfull_mo2cap2/pose-decoder-040.ckpt --heatmap_trained_path utils/trained_heatmaps/heatmap_best.ckpt --heatmap_path ./utils/trained_egopwfull_mo2cap2/heatmap_embedding-040.ckpt --spatial_transformer_path ./utils/trained_egopwfull_mo2cap2/spatial_transformer-040.ckpt`
 
 Change flag `--upp` to `--low` to train the lower body model.
 

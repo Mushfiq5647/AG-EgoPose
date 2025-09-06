@@ -6,17 +6,12 @@ actionformer/config/
 actionformer/epoch_014.pth.tar
 actionformer/epoch_015.pth.tar
 actionformer/epoch_035.pth.tar
-utils/kinect_trained_ckpt_you2megcn
-utils/kinect_trained_ckpt_final
-utils/cmu_trained_ckpt_you2me_actionformer/
-utils/cmu_trained_ckpt_you2me_final
-you2me_ds_release_cmu (1)/
-you2me_ds_release_kinect/
-annotations.json
-test_annotations.json
-homography.py
+utils/trained_egopwfull_egogta
+utils/trained_egopwfull_mo2cap2
+utils/trained_heatmaps
+utils/mo2cap2
+utils/sceneego
 testing.py
-egopw_dict.txt
 generate_homography_and_adjust.py
 generate_3D_plot_point.py
 generate_egopw.py
@@ -24,7 +19,7 @@ generate_global-ego.py
 test_egoglobal.txt
 update_homography.py
 update_homography_number.py
-testing.py
+
 # Ignore Python cache files
 
 
