@@ -19,7 +19,7 @@ generate_global-ego.py
 test_egoglobal.txt
 update_homography.py
 update_homography_number.py
-
+joint_points_output
 # Ignore Python cache files
 
 

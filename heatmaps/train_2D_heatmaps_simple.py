@@ -24,7 +24,7 @@ print("Using device:", device)
 
 def main(args):
     # Create output directory
-    heatmap_dir = './utils/trained_heatmaps/mse'
+    heatmap_dir = './utils/trained_heatmaps/bce'
     os.makedirs(heatmap_dir, exist_ok=True)
     
     # Create log file for epoch results
@@ -49,7 +49,8 @@ def main(args):
     model = HeatMap_Network(opt, model_name='resnet18').to(device)
     
     # Simple loss and optimizer
-    criterion = nn.MSELoss()
+    pos_weight = torch.tensor(12.0, device=device)
+    criterion =  torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction="mean")
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.num_epochs)
     
@@ -71,34 +72,32 @@ def main(args):
             
             B, T = images.shape[:2]
             
-            # MEMORY OPTIMIZATION: Process heatmaps in smaller chunks
-            chunk_size = 16  # Process 4 frames at a time to reduce memory usage
-            all_pred_heatmaps = []
+            # Process ALL images at once (more efficient and stable)
+            img_flat = images.view(-1, 3, args.crop_size, args.crop_size)  # [B*T, 3, H, W]
+            heatmaps_flat = heatmaps.view(B*T, 15, 64, 64)  # [B*T, 15, H, W]
             
-            for t in range(0, T, chunk_size):
-                end_t = min(t + chunk_size, T)
-                img_chunk = images[:, t:end_t].contiguous()  # [B, chunk_size, 3, H, W]
-                hm_chunk = heatmaps[:, t:end_t].contiguous()  # [B, chunk_size, 15, H, W]
-                
-                # Flatten for model processing
-                img_chunk_flat = img_chunk.view(-1, 3, args.crop_size, args.crop_size)
-                hm_chunk_flat = hm_chunk.view(-1, 15, 128, 128)
-                
-                # Forward pass on chunk with mixed precision (fix deprecated warning)
-                with autocast(device_type='cuda'):
-                    pred_chunk = model(img_chunk_flat)
-                all_pred_heatmaps.append(pred_chunk)
-
+            # Debug: Check ground truth heatmaps
+            if i == 0:  # Only print for first batch
+                print(f"GT heatmaps dtype: {heatmaps_flat.dtype}")
+                print(f"GT heatmaps shape: {heatmaps_flat.shape}")
+                print(f"GT heatmaps min/max: {heatmaps_flat.min().item():.6f}/{heatmaps_flat.max().item():.6f}")
+                print(f"GT heatmaps mean: {heatmaps_flat.mean().item():.6f}")
+                print(f"GT heatmaps non-zero count: {(heatmaps_flat > 0).sum().item()}")
             
-            # Concatenate all predictions
-            pred_heatmaps = torch.cat(all_pred_heatmaps, dim=0)  # [B*T, 15, 128, 128]
-            heatmaps_flat = heatmaps.view(B*T, 15, 128, 128)
+            # Forward pass with mixed precision
+            with autocast(device_type='cuda'):
+                pred_heatmaps = model(img_flat)  # [B*T, 15, 128, 128] - raw logits now
+            
+            # Debug: Check model predictions
+            if i == 0:  # Only print for first batch
+                print(f"Pred heatmaps dtype: {pred_heatmaps.dtype}")
+                print(f"Pred heatmaps min/max: {pred_heatmaps.min().item():.6f}/{pred_heatmaps.max().item():.6f}")
+                print(f"Pred heatmaps mean: {pred_heatmaps.mean().item():.6f}")
+                print(f"Pred heatmaps std: {pred_heatmaps.std().item():.6f}")
             
             # Convert predictions to FP32 for loss computation
             pred_heatmaps = pred_heatmaps.float()
             heatmaps_flat = heatmaps_flat.float()
-            
-            # Loss computation (in FP32 for stability)
             loss = criterion(pred_heatmaps, heatmaps_flat)
             
             # Debug: Check for NaN/Inf and gradient norms
@@ -110,44 +109,23 @@ def main(args):
             optimizer.zero_grad()
             scaler.scale(loss).backward()
             
-            # Check gradient norms and NaN/Inf before stepping
-            total_norm = 0
-            has_nan_grad = False
-            has_inf_grad = False
+            # Unscale gradients first (required for AMP)
+            scaler.unscale_(optimizer)
             
+            # Check for NaN/Inf gradients AFTER unscaling
+            has_nan_inf = False
             for p in model.parameters():
-                if p.grad is not None:
-                    # Check for NaN/Inf in gradients
-                    if torch.isnan(p.grad).any():
-                        has_nan_grad = True
-                    if torch.isinf(p.grad).any():
-                        has_inf_grad = True
-                    
-                    param_norm = p.grad.data.norm(2)
-                    total_norm += param_norm.item() ** 2
-            total_norm = total_norm ** (1. / 2)
+                if p.grad is not None and (torch.isnan(p.grad).any() or torch.isinf(p.grad).any()):
+                    has_nan_inf = True
+                    break
             
-            # Log gradient issues and skip problematic steps
-            if has_nan_grad:
-                print(f"WARNING: NaN gradients detected at step {i} - SKIPPING")
-                scaler.update()
-                continue
-            if has_inf_grad:
-                print(f"WARNING: Inf gradients detected at step {i} - SKIPPING")
-                scaler.update()
+            if has_nan_inf:
+                print(f"WARNING: NaN/Inf gradients detected at step {i} - SKIPPING")
+                scaler.update()  # Update scaler even when skipping
                 continue
             
-            # Skip step if gradients are too small (indicates no learning)
-            if total_norm < 1e-8:
-                print(f"WARNING: Very small gradients ({total_norm:.2e}) at step {i}")
-                scaler.update()
-                continue
-            
-            # Skip step if gradients are too large (indicates instability)
-            if total_norm > 1e6:  # 1 million
-                print(f"WARNING: Very large gradients ({total_norm:.2e}) at step {i} - SKIPPING")
-                scaler.update()
-                continue
+            # Gradient clipping to prevent NaN/Inf
+            total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=args.clip_value)
             
             scaler.step(optimizer)
             scaler.update()
@@ -205,8 +183,8 @@ if __name__ == '__main__':
     parser.add_argument('--num_heatmap', type=int, default=15, help='Number of heatmap channels')
 
     # Train
-    parser.add_argument('--learning_rate', type=float, default=1e-4)
-    parser.add_argument('--clip_value', type=float, default=10.0)
+    parser.add_argument('--learning_rate', type=float, default=5e-4)  # Much smaller LR to prevent gradient explosion
+    parser.add_argument('--clip_value', type=float, default=5.0)
     parser.add_argument('--num_epochs', type=int, default=25)  # Reasonable for heatmaps
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--num_workers', type=int, default=4)

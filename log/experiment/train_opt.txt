@@ -14,7 +14,7 @@ epoch_count: 1
 experiment: False
 experiment_name: experiment
 gpu_ids: [0]
-heatmap_trained_path: utils/trained_heatmaps/heatmap-best.ckpt
+heatmap_trained_path: utils/trained_heatmaps/bce/heatmap_epoch_25.ckpt
 init_ImageNet: False
 init_type: kaiming
 isTrain: True

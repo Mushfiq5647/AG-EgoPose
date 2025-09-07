@@ -22,9 +22,7 @@ class JointIDEncoding(nn.Module):
 
 
 class HeatmapToJointFeatures(nn.Module):
-    """Convert heatmaps (B, T, J, H, W) to joint features (B, T, J, feature_dim)"""
-    
-    def __init__(self, heatmap_size=128, feature_dim=128, method='conv_pool'):
+    def __init__(self, heatmap_size=64, feature_dim=64, method='conv_pool'):
         super(HeatmapToJointFeatures, self).__init__()
         self.method = method
         self.feature_dim = feature_dim
@@ -97,7 +95,7 @@ class HeatmapToJointFeatures(nn.Module):
 class SpatialJointTransformer(nn.Module):
     """Spatial transformer for modeling joint relationships"""
     
-    def __init__(self, feature_dim=128, num_heads=4, num_layers=3, dropout=0.1):
+    def __init__(self, feature_dim=64, num_heads=4, num_layers=3, dropout=0.1):
         super(SpatialJointTransformer, self).__init__()
         self.feature_dim = feature_dim
 

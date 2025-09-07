@@ -195,7 +195,7 @@ class EgoPwWindowDataset(torch.utils.data.Dataset):
 
         for seq_idx, base in enumerate(seq_dirs):
             img_dir = os.path.join(base, 'imgs')
-            hm_dir = os.path.join(base, 'heatmap')
+            hm_dir = os.path.join(base, 'heatmap64')
 
             # Load ground-truth list and build map
             with open(os.path.join(base, 'pseudo_gt.pkl'), 'rb') as f:
@@ -276,7 +276,7 @@ class EgoPwWindowDataset(torch.utils.data.Dataset):
 
         return {
             'input_rgb':    img_batch,
-            # 'gt_heatmap':   hm_batch,
+            'gt_heatmap':   hm_batch,
             'gt_local_pose':pose_batch
         }
 

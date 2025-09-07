@@ -19,6 +19,11 @@ class FeatureEncoder(nn.Module):
         self.linear = nn.Linear(resnet.fc.in_features, embed_size)
         self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
         self.actionformer_model = actionformer_model
+        
+        # Set ActionFormer to eval mode if it's frozen
+        if not any(p.requires_grad for p in actionformer_model.parameters()):
+            self.actionformer_model.eval()
+            print("Actionformer model set to eval")
 
     def forward(self, images):
         feat_block = []
@@ -58,7 +63,7 @@ class FeatureEncoder(nn.Module):
     #     return outputs
 
 class PoseDecoder(nn.Module):
-    def __init__(self, motion_dim=384, joint_dim=128, out_dim=3, hidden=256):
+    def __init__(self, motion_dim=384, joint_dim=64, out_dim=3, hidden=256):
         super().__init__()
         self.mlp = nn.Sequential(
             nn.Linear(motion_dim + joint_dim, hidden),

@@ -161,25 +161,28 @@ class HeatMap_UnrealEgo_AfterBackbone(nn.Module):
         self.layer3_1x1 = convrelu(c3, c3, 1, 0)
         self.layer4_1x1 = convrelu(c4, c4, 1, 0)
 
-        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
 
         # Improved FPN-style decoder with better feature fusion
         self.conv_up3 = convrelu(c4 + c3, c3, 3, 1)
         self.conv_up2 = convrelu(c3 + c2, c2, 3, 1)
-        self.conv_up1 = convrelu(c2 + c1, c2, 3, 1)
+        self.conv_up1 = convrelu(c2 + c1, c1, 3, 1)
         self.conv_up0 = convrelu(c2 + c1, c1, 3, 1)
-        
+
         # Additional refinement layers
-        self.conv_refine1 = convrelu(c1, c1, 3, 1)
-        self.conv_refine2 = convrelu(c1, c1, 3, 1)
+        # self.conv_refine1 = convrelu(c1, c1, 3, 1)
+        # self.conv_refine2 = convrelu(c1, c1, 3, 1)
         
         # Dropout for regularization
         self.dropout = nn.Dropout2d(0.1)
         
-        # Final heatmap head with ultra-conservative initialization
+        # Channel reduction layer: 128 -> 64 (for skipping conv_up0)
+        self.channel_reduce = convrelu(c2, c1, 1, 0)
+        
+        # Final heatmap head - adjusted for sigma=2 heatmaps (wider, lower intensity)
         self.conv_heatmap = nn.Conv2d(c1, self.num_heatmap, 1)
-        torch.nn.init.normal_(self.conv_heatmap.weight, mean=0.0, std=0.01)  # Very small std
-        torch.nn.init.constant_(self.conv_heatmap.bias, 0.0)  # Zero bias
+        nn.init.kaiming_normal_(self.conv_heatmap.weight, nonlinearity='linear')
+        nn.init.constant_(self.conv_heatmap.bias, -2.0)  # sigmoid(-4.6) ≈ 0.01 background prior
 
     def forward(self, list_rgb_features):
         input = list_rgb_features[0]
@@ -205,20 +208,16 @@ class HeatMap_UnrealEgo_AfterBackbone(nn.Module):
         layer1 = self.layer1_1x1(layer1)
         x = torch.cat([x, layer1], dim=1)
         x = self.conv_up1(x)
+        # print("X shape after convup1",x.shape)
 
-        x = self.upsample(x)
-        layer0 = self.layer0_1x1(layer0)
-        x = torch.cat([x, layer0], dim=1)
-        x = self.conv_up0(x)
+        # Skip conv_up0 and go directly from conv_up1 (128 channels, 56x56) to 64x64
+        # Add channel reduction: 128 -> 64 -> 15
         
-        # Additional refinement
-        x = self.conv_refine1(x)
-        x = self.conv_refine2(x)
+        # Resize to target size (56x56 -> 64x64 is much gentler)
+        x = F.interpolate(x, size=(64, 64), mode='bilinear', align_corners=False)
         
-        # Resize to target size
-        x = F.interpolate(x, size=(128, 128), mode='bilinear', align_corners=False)
-        
-        # Final heatmap prediction (raw logits for MSE loss)
+        # Final heatmap prediction - raw logits for MSE loss
         output = self.conv_heatmap(x)
+        # print("output shape after conv heatmap",output.shape)
         
         return output

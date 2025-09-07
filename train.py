@@ -88,6 +88,23 @@ def initialize_weights(m):
         if m.bias is not None:
             nn.init.zeros_(m.bias)
 
+def initialize_gelu_weights(m):
+    if isinstance(m, nn.Linear):
+        nn.init.xavier_uniform_(m.weight)  # More conservative, standard for transformers
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+
+# heatmap_embedding: ReLU - use ReLU initialization
+def initialize_relu_weights(m):
+    if isinstance(m, nn.Linear):
+        nn.init.kaiming_uniform_(
+            m.weight,
+            a=0,  # For ReLU
+            nonlinearity='relu'
+        )
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+
 
 def check_nan(tensor, name, epoch, i):
     if torch.isnan(tensor).any() or torch.isinf(tensor).any():
@@ -129,7 +146,6 @@ def main(args):
 
     # image preprocessing
     transform = transforms.Compose([
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
         transforms.Resize((args.crop_size, args.crop_size),antialias=True),
         transforms.ToTensor(),
         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
@@ -147,10 +163,10 @@ def main(args):
     if os.path.exists(args.heatmap_trained_path):
         print(f"Loading pre-trained 2D heatmap network from {args.heatmap_trained_path}")
         net_heatmap.load_state_dict(torch.load(args.heatmap_trained_path, map_location=device))
-        net_heatmap.eval()  # Set to evaluation mode
         # Freeze the heatmap network
         for param in net_heatmap.parameters():
             param.requires_grad = False
+        net_heatmap.eval()  # Set to evaluation mode after freezing
         print("2D heatmap network loaded and frozen")
         print(f"Using heatmap model: {args.heatmap_trained_path}")
         
@@ -164,58 +180,28 @@ def main(args):
         print(f"Warning: Pre-trained heatmap model not found at {args.heatmap_trained_path}")
         print("Will use ground truth heatmaps for training")
     
-    heatmap_embedding = HeatmapToJointFeatures(heatmap_size=128, feature_dim=128, method='conv_pool').to(device)
+    heatmap_embedding = HeatmapToJointFeatures(heatmap_size=64, feature_dim=64, method='conv_pool').to(device)
     encoder = FeatureEncoder(actionformer_feature_extractor).to(device)
-    # total_embed = args.embed_feature_dim * 2
-    # spatio_temporal_transformer = SpatioTemporalTransformer(
-    #     actionformer_feature_extractor,
-    #     total_embed,
-    #     args.num_layers).to(device)
     spatial_joint_transformer = SpatialJointTransformer(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
-
-    # decoder = FeatureDecoder(args.hidden_size, args.seq_length,
-    #                          spatio_temporal_transformer).to(device)
-    pose_decoder = PoseDecoder(motion_dim=384, joint_dim=128, out_dim=3).to(device)
+    pose_decoder = PoseDecoder(motion_dim=384, joint_dim=64, out_dim=3).to(device)
     print("Models initialized")
-    
-    # Freeze ActionFormer (keep pre-trained features)
+
     print("Freezing ActionFormer...")
     for param in actionformer_feature_extractor.parameters():
         param.requires_grad = False
     print("ActionFormer frozen")
-    
-    # Initialize weights appropriately for each component
-    # encoder: DO NOT reinitialize (contains pre-trained ResNet + ActionFormer)
-    # pose_decoder: LeakyReLU - use current initialization
+
+    #Initialize weights
     pose_decoder.apply(initialize_weights)
-    
-    # spatial_joint_transformer: GELU - use Xavier initialization (more conservative)
-    def initialize_gelu_weights(m):
-        if isinstance(m, nn.Linear):
-            nn.init.xavier_uniform_(m.weight)  # More conservative, standard for transformers
-            if m.bias is not None:
-                nn.init.zeros_(m.bias)
-    
     spatial_joint_transformer.apply(initialize_gelu_weights)
-    
-    # heatmap_embedding: ReLU - use ReLU initialization
-    def initialize_relu_weights(m):
-        if isinstance(m, nn.Linear):
-            nn.init.kaiming_uniform_(
-                m.weight,
-                a=0,  # For ReLU
-                nonlinearity='relu'
-            )
-            if m.bias is not None:
-                nn.init.zeros_(m.bias)
-    
     heatmap_embedding.apply(initialize_relu_weights)
 
-    limb_loss_func = LossFuncLimb().to(device)  # Use existing bone length loss
+    #define loss functions
+    limb_loss_func = LossFuncLimb().to(device)
     mpjpe_loss_func = LossFuncMPJPE().to(device)
     cos_sim_loss_func = LossFuncCosSim().to(device)
-    params = (
 
+    params = (
             list(encoder.parameters()) +
             list(heatmap_embedding.parameters()) +
             list(pose_decoder.parameters()) +
@@ -238,6 +224,7 @@ def main(args):
         encoder.train()
         pose_decoder.train()
         heatmap_embedding.train()
+        spatial_joint_transformer.train()
         # Initialize training loss accumulators
         train_mpjpe_losses = []
         train_cos_losses = []
@@ -249,30 +236,24 @@ def main(args):
             # Instead of: for i, (images, homography, gt_egoposes, lengths) in enumerate(data_loader)
             images = batch['input_rgb'].to(device)  # Tensor
             B, T, _, H_img, W_img = images.shape
-            H_hm, W_hm = 128,128
+            H_hm, W_hm = 64,64
             gt_egoposes = batch['gt_local_pose'].to(device)
-            # MEMORY OPTIMIZATION: Process heatmaps in smaller chunks
-            chunk_size = 16  # Process 16 frames at a time instead of 64
-            all_heatmaps = []
-            
+            # Process ALL images at once (more efficient)
             with torch.no_grad():
-                for t in range(0, T, chunk_size):
-                    end_t = min(t + chunk_size, T)
-                    img_chunk = images[:, t:end_t].contiguous()  # [B, chunk_size, 3, H, W]
-                    img_chunk_flat = img_chunk.view(-1, 3, H_img, W_img)  # [B*chunk_size, 3, H, W]
-                    
-                    hm_chunk = net_heatmap(img_chunk_flat)  # [B*chunk_size, J, H_hm, W_hm]
-                    hm_chunk = F.interpolate(hm_chunk, size=(H_hm, W_hm), mode='bilinear', align_corners=True)
-                    hm_chunk = hm_chunk.view(B, end_t - t, 15, H_hm, W_hm)
-                    all_heatmaps.append(hm_chunk)
-                    
-            heatmaps = torch.cat(all_heatmaps, dim=1)  # [B, T, 15, H_hm, W_hm]
+                all_images_flat = images.view(-1, 3, H_img, W_img)  # [B*T, 3, H, W]
+                print("Image shape", all_images_flat.shape)
+                all_heatmaps = net_heatmap(all_images_flat)  # [B*T, J, H_hm, W_hm]
+                all_heatmaps = torch.sigmoid(all_heatmaps)  # Convert logits to 0-1 range for BCE with logits model
+                heatmaps = all_heatmaps.view(B, T, 15, H_hm, W_hm)  # [B, T, 15, H_hm, W_hm]
             
             # Forward pass with mixed precision
             with autocast(device_type='cuda'):
                 motion_features = encoder(images)
+                print("Motion features", motion_features.shape)
                 heatmap_features = heatmap_embedding(heatmaps)
+                print("Heatmap features", heatmap_features.shape)
                 spatial_joint_features = spatial_joint_transformer(heatmap_features)
+                print("Spatial Transformers",spatial_joint_features.shape)
                 pose_logits = pose_decoder(spatial_joint_features, motion_features)
             # Reshape to pose format and convert to FP32 for loss computation
             final = pose_logits.view(B, T, num_joints, 3).float()  # Convert to FP32
@@ -413,7 +394,7 @@ if __name__ == '__main__':
                         help='directory for resized images')
 
     parser.add_argument('--embed_feature_dim', type=int, default=256, help='dimension of word embedding vectors')
-    parser.add_argument('--hm_embed_dim', type=int, default=128, help='dimension of word embedding vectors')
+    parser.add_argument('--hm_embed_dim', type=int, default=64, help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int, default=512, help='dimension of lstm hidden states')
     parser.add_argument('--num_layers', type=int, default=3, help='number of layers in lstm')
     parser.add_argument('--learning_rate', type=float, default=0.001)
