@@ -99,7 +99,7 @@ class SpatialJointTransformer(nn.Module):
         super(SpatialJointTransformer, self).__init__()
         self.feature_dim = feature_dim
 
-        self.joint_id = JointIDEncoding(num_joints=15, dim=feature_dim, p_drop=0.1)
+        # self.joint_id = JointIDEncoding(num_joints=15, dim=feature_dim, p_drop=0.1)
         
         # Transformer encoder layer
         encoder_layer = nn.TransformerEncoderLayer(
@@ -126,7 +126,7 @@ class SpatialJointTransformer(nn.Module):
         B, T, J, feature_dim = joint_features.shape
         
         # Skip positional encoding for now (causing test overfitting)
-        joint_features = self.joint_id(joint_features)
+        # joint_features = self.joint_id(joint_features)
         
         # Reshape for transformer: (B*T, J, feature_dim)
         joint_input = joint_features.view(B*T, J, feature_dim)

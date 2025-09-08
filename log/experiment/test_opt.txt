@@ -2,25 +2,25 @@
 ae_hidden_size: 20
 batch_size: 8
 data_dir: /data/My_Backup/UnrealEgo/scripts/data/UnrealEgoData
-decoder_path: ./utils/trained_egopwfull_mo2cap2/pose-decoder-040.ckpt
+decoder_path: ./utils/sceneego/pose-decoder-best.ckpt
 display_id: 1
 display_port: 8097
 display_single_pane_ncols: 0
 display_winsize: 256
 distributed: False
-encoder_path: ./utils/trained_egopwfull_mo2cap2/encoder-040.ckpt
+encoder_path: ./utils/sceneego/encoder-best.ckpt
 experiment: False
 experiment_name: experiment
 gpu_ids: [0]
-heatmap_path: ./utils/trained_egopwfull_mo2cap2/heatmap_embedding-040.ckpt
-heatmap_trained_path: utils/trained_heatmaps/heatmap_best.ckpt
+heatmap_path: ./utils/sceneego/heatmap_embedding-best.ckpt
+heatmap_trained_path: utils/trained_heatmaps/bce/heatmap_epoch_25.ckpt
 init_ImageNet: False
 init_type: kaiming
 isTrain: False
 load_size_heatmap: [64, 64]
 load_size_rgb: [256, 256]
 log_dir: log
-model: egoglobal
+model: sceneego
 model_name: resnet18
 ntest: inf
 num_heatmap: 15
@@ -32,7 +32,7 @@ project_name: project_name
 save_dir_pose: results
 save_eval_pose: False
 save_eval_pose_freq: 2000
-spatial_transformer_path: ./utils/trained_egopwfull_mo2cap2/spatial_transformer-040.ckpt
+spatial_transformer_path: ./utils/sceneego/spatial_transformer-best.ckpt
 use_amp: False
 use_slurm: False
 which_epoch: latest

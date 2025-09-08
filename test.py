@@ -77,13 +77,16 @@ def main(args):
     print("Test Data Loading complete", len(test_loader))
     print("Total test dataset", len(test_loader.dataset))
 
-
+    print("Freezing ActionFormer...")
+    for param in actionformer_feature_extractor.parameters():
+        param.requires_grad = False
+    print("ActionFormer frozen")
     # Initialize models (same as train.py)
     net_heatmap = HeatMap_Network(opt, model_name='resnet18').to(device)
-    heatmap_embedding = HeatmapToJointFeatures(heatmap_size=128, feature_dim=128, method='conv_pool').to(device)
+    heatmap_embedding = HeatmapToJointFeatures(heatmap_size=64, feature_dim=64, method='conv_pool').to(device)
     encoder = FeatureEncoder(actionformer_feature_extractor).to(device)
     spatial_joint_transformer = SpatialJointTransformer(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
-    pose_decoder = PoseDecoder(motion_dim=384, joint_dim=128, out_dim=3).to(device)
+    pose_decoder = PoseDecoder(motion_dim=384, joint_dim=64, out_dim=3).to(device)
     
     # Load pre-trained 2D heatmap network
     if os.path.exists(args.heatmap_trained_path):
@@ -132,52 +135,28 @@ def main(args):
     with torch.no_grad():
         for i, (batch) in enumerate(test_loader):
             print("Printing iteration number:", i)
+            # Instead of: for i, (images, homography, gt_egoposes, lengths) in enumerate(data_loader)
             images = batch['input_rgb'].to(device)  # Tensor
             B, T, _, H_img, W_img = images.shape
-            H_hm, W_hm = 128, 128
+            H_hm, W_hm = 64, 64
             gt_egoposes = batch['gt_local_pose'].to(device)
-            
-            # MEMORY OPTIMIZATION: Process heatmaps in smaller chunks (same as train.py)
-            chunk_size = 16  # Process 16 frames at a time instead of 64
-            all_heatmaps = []
-            
+            # Process ALL images at once (more efficient)
             with torch.no_grad():
-                for t in range(0, T, chunk_size):
-                    end_t = min(t + chunk_size, T)
-                    img_chunk = images[:, t:end_t].contiguous()  # [B, chunk_size, 3, H, W]
-                    img_chunk_flat = img_chunk.view(-1, 3, H_img, W_img)  # [B*chunk_size, 3, H, W]
-                    
-                    hm_chunk = net_heatmap(img_chunk_flat)  # [B*chunk_size, J, H_hm, W_hm]
-                    hm_chunk = F.interpolate(hm_chunk, size=(H_hm, W_hm), mode='bilinear', align_corners=True)
-                    hm_chunk = hm_chunk.view(B, end_t - t, 15, H_hm, W_hm)
-                    all_heatmaps.append(hm_chunk)
-                    
-            heatmaps = torch.cat(all_heatmaps, dim=1)  # [B, T, 15, H_hm, W_hm]
-            
-            # Forward pass without autocast for full precision
+                all_images_flat = images.view(-1, 3, H_img, W_img)  # [B*T, 3, H, W]
+                print("Image shape", all_images_flat.shape)
+                all_heatmaps = net_heatmap(all_images_flat)  # [B*T, J, H_hm, W_hm]
+                all_heatmaps = torch.sigmoid(all_heatmaps)  # Convert logits to 0-1 range for BCE with logits model
+                heatmaps = all_heatmaps.view(B, T, 15, H_hm, W_hm)  # [B, T, 15, H_hm, W_hm]
             motion_features = encoder(images)
-            
-            # MEMORY OPTIMIZATION: Process heatmap embedding in chunks
-            chunk_size = 8  # Process 8 frames at a time for heatmap embedding
-            all_heatmap_features = []
-            
-            for t in range(0, T, chunk_size):
-                end_t = min(t + chunk_size, T)
-                hm_chunk = heatmaps[:, t:end_t].contiguous()  # [B, chunk_size, 15, 128, 128]
-                hm_features_chunk = heatmap_embedding(hm_chunk)  # [B, chunk_size, 15, 128]
-                all_heatmap_features.append(hm_features_chunk)
-            
-            heatmap_features = torch.cat(all_heatmap_features, dim=1)  # [B, T, 15, 128]
-            print("Passed heatmap_features")
-            
+            heatmap_features = heatmap_embedding(heatmaps)
             spatial_joint_features = spatial_joint_transformer(heatmap_features)
             print("Passed spatial_joint_features")
             pose_logits = pose_decoder(spatial_joint_features, motion_features)
             print("Passed decoder")
-            
+
             # Reshape to pose format
             final = pose_logits.view(B, T, num_joints, 3)
-            
+
             # Reshape for loss computation
             final_reshaped = final.reshape(B * T, num_joints, 3)
             gt_reshaped = gt_egoposes.reshape(B * T, num_joints, 3)
@@ -256,7 +235,7 @@ if __name__ == '__main__':
 
     # Model parameters
     parser.add_argument('--embed_feature_dim', type=int, default=256, help='dimension of word embedding vectors')
-    parser.add_argument('--hm_embed_dim', type=int, default=128, help='dimension of word embedding vectors')
+    parser.add_argument('--hm_embed_dim', type=int, default=64, help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int, default=512, help='dimension of lstm hidden states')
     parser.add_argument('--num_layers', type=int, default=2, help='number of layers in lstm')
     parser.add_argument('--seq_length', type=int, default=32, help='length of the pose/video sequences')

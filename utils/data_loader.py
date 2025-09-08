@@ -276,13 +276,13 @@ class EgoPwWindowDataset(torch.utils.data.Dataset):
 
         return {
             'input_rgb':    img_batch,
-            'gt_heatmap':   hm_batch,
+            # 'gt_heatmap':   hm_batch,
             'gt_local_pose':pose_batch
         }
 
 
 class SceneEgoWindowDataset(torch.utils.data.Dataset):
-    def __init__(self, opt, transform, mode, window_size=64, stride=32):
+    def __init__(self, opt, transform, mode, window_size=64, stride=16):
         self.transform = transform
         self.window_size = window_size
         self.stride = stride
