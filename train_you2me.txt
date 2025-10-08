@@ -1,0 +1,41 @@
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/catch36/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/catch37/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/catch39/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/catch40/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/catch41/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/catch42/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/catch55/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/convo43/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/convo46/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/convo47/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/convo53/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/convo54/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/convo59/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/patty1/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/patty2/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/patty5/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/patty26/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/patty27/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/patty28/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/patty30/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/patty31/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/patty32/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/patty34/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/patty35/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/sport56/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/sport57/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_kinect/kinect/sport58/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_cmu (1)/cmu/1-catch1/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_cmu (1)/cmu/2-catch2/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_cmu (1)/cmu/3-catch3/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_cmu (1)/cmu/4-convo1/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_cmu (1)/cmu/5-convo2/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_cmu (1)/cmu/6-convo3/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_cmu (1)/cmu/7-convo4/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_cmu (1)/cmu/8-convo5/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_cmu (1)/cmu/9-convo6/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_cmu (1)/cmu/10-hand1/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_cmu (1)/cmu/11-hand2/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_cmu (1)/cmu/12-hand3/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_cmu (1)/cmu/13-sports1/synchronized/frames
+/data/My_Backup/Dataset/you2me_ds_release_cmu (1)/cmu/14-sports2/synchronized/frames

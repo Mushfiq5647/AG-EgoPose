@@ -12,8 +12,11 @@ class FeatureEncoder(nn.Module):
         self.resnet = nn.Sequential(*modules)
         for i, layer in enumerate(self.resnet):
             if i < 7:  # Freeze indices 0-6: conv1, bn1, relu, maxpool, layer1, layer2, layer3
+                layer.eval()
                 for p in layer.parameters():
                     p.requires_grad = False
+            else:
+                layer.train()
             # Index 7 (layer4) and Index 8 (avgpool) stay trainable
         
         self.linear = nn.Linear(resnet.fc.in_features, embed_size)
@@ -63,7 +66,7 @@ class FeatureEncoder(nn.Module):
     #     return outputs
 
 class PoseDecoder(nn.Module):
-    def __init__(self, motion_dim=384, joint_dim=64, out_dim=3, hidden=256):
+    def __init__(self, motion_dim=384, joint_dim=128, out_dim=3, hidden=256):
         super().__init__()
         self.mlp = nn.Sequential(
             nn.Linear(motion_dim + joint_dim, hidden),

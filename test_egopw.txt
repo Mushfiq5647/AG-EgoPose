@@ -1,3 +1,6 @@
+/data/My_Backup/Dataset/EgoPW_dataset/EgoPW_original/ayush_new/rountunda4
+/data/My_Backup/Dataset/EgoPW_dataset/EgoPW_original/ayush_new/rountunda1
+/data/My_Backup/Dataset/EgoPW_dataset/EgoPW_original/ayush_new/rountunda2
 /data/My_Backup/Dataset/EgoPW_dataset/EgoPW_original/ayush_new/office1
 /data/My_Backup/Dataset/EgoPW_dataset/EgoPW_original/ayush_new/rountunda3
 /data/My_Backup/Dataset/EgoPW_dataset/EgoPW_original/ayush_new/office2

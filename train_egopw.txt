@@ -45,6 +45,3 @@
 /data/My_Backup/Dataset/EgoPW_dataset/EgoPW_original/zhili_new/office2
 /data/My_Backup/Dataset/EgoPW_dataset/EgoPW_original/zhili_new/rest2
 /data/My_Backup/Dataset/EgoPW_dataset/EgoPW_original/zhili_new/kitchen1
-/data/My_Backup/Dataset/EgoPW_dataset/EgoPW_original/ayush_new/rountunda4
-/data/My_Backup/Dataset/EgoPW_dataset/EgoPW_original/ayush_new/rountunda1
-/data/My_Backup/Dataset/EgoPW_dataset/EgoPW_original/ayush_new/rountunda2

@@ -13,9 +13,10 @@ from options.test_options import TestOptions
 from utils.data_loader import dataloader_full
 from utils.cross_attention_model import HeatmapToJointFeatures
 from utils.cross_attention_model import SpatialJointTransformer
+from utils.cross_attention_model import PoseDecoder
 from utils.loss import LossFuncMPJPE
 from heatmaps.network_heatmap import HeatMap_Network
-from utils.model import FeatureEncoder, PoseDecoder
+from utils.model import FeatureEncoder
 from utils.util import batch_compute_similarity_transform_torch
 from utils.pose_evaluation import calculate_ba_mpjpe
 import socket
@@ -32,7 +33,6 @@ if torch.cuda.is_available():
     print("Current CUDA device index:", torch.cuda.current_device())
     print("Device name:", torch.cuda.get_device_name(torch.cuda.current_device()))
 
-np.set_printoptions(precision=6, suppress=True)
 # Number of joints and coordinates per joint
 num_joints = 15
 # coords_per_joint = 3
@@ -62,6 +62,20 @@ num_joints = 15
 # # Convert to tensor
 # edge_index = torch.tensor(edge_index, dtype=torch.long)
 
+def egoglobal_to_egopw(vec):
+    """
+    vec: (..., 3) [Xg, Yg, Zg]
+    EgoGlobal -> EgoPW axis conversion
+    """
+    # Step 1: permute axes (Xg,Yg,Zg) -> (Zg,Xg,Yg)
+    v = vec[..., [2, 0, 1]]
+    # Step 2: negate Y and Z
+    v[..., 1] = -v[..., 1]
+    v[..., 2] = -v[..., 2]
+    return v
+
+
+
 def main(args):
     actionformer_feature_extractor = initialize_actionformer(config_file_path=args.config_path)
     
@@ -83,11 +97,11 @@ def main(args):
     print("ActionFormer frozen")
     # Initialize models (same as train.py)
     net_heatmap = HeatMap_Network(opt, model_name='resnet18').to(device)
-    heatmap_embedding = HeatmapToJointFeatures(heatmap_size=64, feature_dim=64, method='conv_pool').to(device)
+    heatmap_embedding = HeatmapToJointFeatures(heatmap_size=64, feature_dim=128, method='conv_pool').to(device)
     encoder = FeatureEncoder(actionformer_feature_extractor).to(device)
     spatial_joint_transformer = SpatialJointTransformer(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
-    pose_decoder = PoseDecoder(motion_dim=384, joint_dim=64, out_dim=3).to(device)
-    
+    # pose_decoder = PoseDecoder(motion_dim=384, joint_dim=128, out_dim=3).to(device)
+    pose_decoder = PoseDecoder(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
     # Load pre-trained 2D heatmap network
     if os.path.exists(args.heatmap_trained_path):
         print(f"Loading pre-trained 2D heatmap network from {args.heatmap_trained_path}")
@@ -146,12 +160,13 @@ def main(args):
                 print("Image shape", all_images_flat.shape)
                 all_heatmaps = net_heatmap(all_images_flat)  # [B*T, J, H_hm, W_hm]
                 all_heatmaps = torch.sigmoid(all_heatmaps)  # Convert logits to 0-1 range for BCE with logits model
-                heatmaps = all_heatmaps.view(B, T, 15, H_hm, W_hm)  # [B, T, 15, H_hm, W_hm]
+                heatmaps = all_heatmaps.view(B, T, 15, H_hm, W_hm)  # [B,
+                # T, 15, H_hm, W_hm]
             motion_features = encoder(images)
             heatmap_features = heatmap_embedding(heatmaps)
             spatial_joint_features = spatial_joint_transformer(heatmap_features)
             print("Passed spatial_joint_features")
-            pose_logits = pose_decoder(spatial_joint_features, motion_features)
+            pose_logits = pose_decoder(heatmap_features, motion_features)
             print("Passed decoder")
 
             # Reshape to pose format
@@ -160,6 +175,11 @@ def main(args):
             # Reshape for loss computation
             final_reshaped = final.reshape(B * T, num_joints, 3)
             gt_reshaped = gt_egoposes.reshape(B * T, num_joints, 3)
+            sample_idx = 0
+
+
+            print("Ground truth joints (first 5):")
+            print(gt_reshaped[sample_idx, :14])
             
             # Compute MPJPE loss
             mpjpe_loss = mpjpe_loss_func(final_reshaped, gt_reshaped)
@@ -172,6 +192,8 @@ def main(args):
 
             # Calculate Procrustes alignment for PA-MPJPE
             S1_hat = batch_compute_similarity_transform_torch(final_reshaped, gt_reshaped)
+            print("Predicted joints (first 5):")
+            print(S1_hat[sample_idx, :14])  # first 5 joints
             
             # Calculate PA-MPJPE (Procrustes Aligned MPJPE)
             pa_mpjpe = mpjpe_loss_func(S1_hat, gt_reshaped)
@@ -235,15 +257,15 @@ if __name__ == '__main__':
 
     # Model parameters
     parser.add_argument('--embed_feature_dim', type=int, default=256, help='dimension of word embedding vectors')
-    parser.add_argument('--hm_embed_dim', type=int, default=64, help='dimension of word embedding vectors')
+    parser.add_argument('--hm_embed_dim', type=int, default=128, help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int, default=512, help='dimension of lstm hidden states')
     parser.add_argument('--num_layers', type=int, default=2, help='number of layers in lstm')
     parser.add_argument('--seq_length', type=int, default=32, help='length of the pose/video sequences')
 
     # Other settings
-    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--num_workers', type=int, default=0)
-    parser.add_argument('--crop_size', type=int, default=224, help='size for randomly cropping images')
+    parser.add_argument('--crop_size', type=int, default=256, help='size for randomly cropping images')
     parser.add_argument('--log_step', type=int, default=10, help='step size for printing log info')
 
     args = parser.parse_args()

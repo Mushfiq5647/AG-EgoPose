@@ -42,13 +42,16 @@ for your each of your training sequences.
 
 Then run the following command:
 
-`python train.py --model_path ./utils/model.py --annotation_path ./vocab/train_annotation.pkl --heatmap_trained_path utils/trained_heatmaps/bce/heatmap_epoch_25.ckpt`
-
-
+`python train.py --model_path ./utils/model.py --annotation_path ./vocab/train_annotation.pkl --heatmap_trained_path utils/trained_heatmaps/bce_combined/heatmap_best.ckpt`
+`python train_finetune.py --model_path ./utils/model.py --annotation_path ./vocab/train_annotation.pkl --heatmap_trained_path utils/trained_heatmaps/bce_combined/heatmap_best.ckpt`
 For testing:
-`python test.py --encoder_path ./utils/mo2cap2/encoder-finetune-20-848.ckpt --decoder_path ./utils/mo2cap2/pose-decoder-finetune-20-848.ckpt --heatmap_trained_path utils/trained_heatmaps/bce/heatmap_epoch_25.ckpt --heatmap_path ./utils/mo2cap2/heatmap_embedding-finetune-20-848.ckpt --spatial_transformer_path ./utils/mo2cap2/spatial_transformer-finetune-20-848.ckpt`
-`python test.py --encoder_path ./utils/sceneego/encoder-best.ckpt --decoder_path ./utils/sceneego/pose-decoder-best.ckpt --heatmap_trained_path utils/trained_heatmaps/bce/heatmap_epoch_25.ckpt --heatmap_path ./utils/sceneego/heatmap_embedding-best.ckpt --spatial_transformer_path ./utils/sceneego/spatial_transformer-best.ckpt`
-`python test.py --encoder_path ./utils/trained_egopwfull_mo2cap2/encoder-040.ckpt --decoder_path ./utils/trained_egopwfull_mo2cap2/pose-decoder-040.ckpt --heatmap_trained_path utils/trained_heatmaps/bce/heatmap_epoch_25.ckpt --heatmap_path ./utils/trained_egopwfull_mo2cap2/heatmap_embedding-040.ckpt --spatial_transformer_path ./utils/trained_egopwfull_mo2cap2/spatial_transformer-040.ckpt`
+`python test.py --encoder_path ./utils/mo2cap2/encoder-finetune-20-848.ckpt --decoder_path ./utils/mo2cap2/pose-decoder-finetune-20-848.ckpt --heatmap_trained_path utils/trained_heatmaps/mse/heatmap_epoch_25.ckpt --heatmap_path ./utils/mo2cap2/heatmap_embedding-finetune-20-848.ckpt --spatial_transformer_path ./utils/mo2cap2/spatial_transformer-finetune-20-848.ckpt`
+`python test.py --encoder_path ./utils/sceneego_cross/encoder-best.ckpt --decoder_path ./utils/sceneego_cross/pose-decoder-best.ckpt --heatmap_trained_path utils/trained_heatmaps/bce_combined/heatmap_best.ckpt --heatmap_path ./utils/sceneego_cross/heatmap_embedding-best.ckpt --spatial_transformer_path ./utils/sceneego_cross/spatial_transformer-best.ckpt`
+`python test.py --encoder_path ./utils/trained_egopwtrain_egogta/encoder-best.ckpt --decoder_path ./utils/trained_egopwtrain_egogta/pose-decoder-best.ckpt --heatmap_trained_path utils/trained_heatmaps/bce_combined/heatmap_best.ckpt --heatmap_path ./utils/trained_egopwtrain_bce_motion/heatmap_embedding-best.ckpt --spatial_transformer_path ./utils/trained_egopwtrain_bce_motion/spatial_transformer-best.ckpt`
+`python test.py --encoder_path ./utils/trained_egopwtrain_bce_only_decoder/encoder-best.ckpt --decoder_path ./utils/trained_egopwtrain_bce_only_decoder/pose-decoder-best.ckpt --heatmap_trained_path utils/trained_heatmaps/bce_combined/heatmap_best.ckpt --heatmap_path ./utils/trained_egopwtrain_bce_only_decoder/heatmap_embedding-best.ckpt --spatial_transformer_path ./utils/trained_egopwtrain_bce_only_decoder/spatial_transformer-best.ckpt`
+`python test.py --encoder_path ./utils/trained_egopwtrain_bce/encoder-best.ckpt --decoder_path ./utils/trained_egopwtrain_bce/pose-decoder-best.ckpt --heatmap_trained_path utils/trained_heatmaps/bce_combined/heatmap_best.ckpt --heatmap_path ./utils/trained_egopwtrain_bce/heatmap_embedding-best.ckpt --spatial_transformer_path ./utils/trained_egopwtrain_bce/spatial_transformer-best.ckpt`
+`python quick_pose_visualization.py --encoder_path ./utils/trained_egopwtrain_bce/encoder-best.ckpt --decoder_path ./utils/trained_egopwtrain_bce/pose-decoder-best.ckpt --heatmap_trained_path utils/trained_heatmaps/bce_combined/heatmap_best.ckpt --heatmap_path ./utils/trained_egopwtrain_bce/heatmap_embedding-best.ckpt --spatial_transformer_path ./utils/trained_egopwtrain_bce/spatial_transformer-best.ckpt`
+`python quick_pose_visualization.py --encoder_path ./utils/sceneego/encoder-best.ckpt --decoder_path ./utils/sceneego/pose-decoder-best.ckpt --heatmap_trained_path utils/trained_heatmaps/bce_combined/heatmap_best.ckpt --heatmap_path ./utils/sceneego/heatmap_embedding-best.ckpt --spatial_transformer_path ./utils/sceneego/spatial_transformer-best.ckpt`
 
 Change flag `--upp` to `--low` to train the lower body model.
 

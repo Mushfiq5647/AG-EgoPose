@@ -62,6 +62,7 @@ def normalize_to_standard_skeleton(poses, skeleton_model=None):
         for i in range(len(poses)):
             poses[i] = skeleton_model.skeleton_resize_single(
                 poses[i], bone_length_file='utils/fisheye/mean3D.mat')
+            print("Rescaling to Mo2Cap2")
     else:
         # Use our universal skeleton approach as fallback
         from utils.universal_skeleton import UniversalSkeletonRescaler
@@ -110,7 +111,7 @@ def calculate_ba_mpjpe(estimated_seq, gt_seq, skeleton_model=None):
     
     # Step 1: Normalize BOTH sequences to the SAME standard skeleton
     if skeleton_model is not None:
-        print("Debug: Using skeleton_model approach")
+        print("Debug: Using Mo2Cap2 skeletal approach")
         # Use skeleton model for normalization (from baseline paper)
         estimated_normalized = np.zeros_like(estimated_seq)
         gt_normalized = np.zeros_like(gt_seq)

@@ -115,7 +115,7 @@ def process_sequence(seq_dir, expect_joints, hm_size, sigma, overwrite=False, im
         return 0, 0
 
     # Output directory is STRICTLY '<seq_dir>/heatmap'
-    out_dir = os.path.join(seq_dir, "heatmap64")
+    out_dir = os.path.join(seq_dir, "heatmap64_2.0")
     os.makedirs(out_dir, exist_ok=True)
 
     saved, total = 0, 0
@@ -174,7 +174,7 @@ def process_sequence(seq_dir, expect_joints, hm_size, sigma, overwrite=False, im
 
 def main():
     parser = argparse.ArgumentParser(description="Generate (15,128,128) heatmaps and save to '<seq>/heatmap/heatmap_XXXXXX.npy'.")
-    parser.add_argument("--train_txt", type=str, default='train_egopw.txt', help="Path to train.txt (one sequence directory per line)")
+    parser.add_argument("--train_txt", type=str, default='test_egopw.txt', help="Path to train.txt (one sequence directory per line)")
     parser.add_argument("--hm_size", type=int, default=64, help="Heatmap size (square). Must be 128 for your spec.")
     parser.add_argument("--sigma", type=float, default=2, help="Gaussian sigma (in heatmap coords).")
     parser.add_argument("--expect_joints", type=int, default=15, help="Expected number of joints (default: 15)")

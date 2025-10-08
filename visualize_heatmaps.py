@@ -21,7 +21,7 @@ try:
     from heatmaps.network_heatmap import HeatMap_Network  # project-relative import
 except Exception:
     # Fallback import if the class lives at repo root as `network_heatmap.py`
-    from network_heatmap import HeatMap_Network
+    from heatmaps.network_heatmap import HeatMap_Network
 
 JOINT_NAMES = [
     "Neck", "Right_shoulder", "Right_elbow", "Right_wrist", "Left_shoulder",
@@ -235,9 +235,9 @@ def main():
     sys.argv = filtered_argv
     
     ap = argparse.ArgumentParser(description="Predict & visualize heatmaps with a pretrained model")
-    ap.add_argument("--image", type=str, default='/data/My_Backup/Dataset/EgoGTA/EgoGTAImages/2020-05-21-13-54-43/img/000010.png', help="Path to input image")
-    ap.add_argument("--checkpoint", type=str, default='utils/trained_heatmaps/bce/heatmap_epoch_25.ckpt', help="Path to model .pth/.pt state_dict")
-    ap.add_argument("--img_size", type=int, default=224, help="Input size used in training (e.g., 224)")
+    ap.add_argument("--image", type=str, default='/data/My_Backup/Dataset/SceneEgo_test/diogo1/imgs/img_000059.jpg', help="Path to input image")
+    ap.add_argument("--checkpoint", type=str, default='utils/trained_heatmaps/bce_combined/heatmap_best.ckpt', help="Path to model .pth/.pt state_dict")
+    ap.add_argument("--img_size", type=int, default=256, help="Input size used in training (e.g., 224)")
     ap.add_argument("--num_joints", type=int, default=15, help="Number of joints")
     ap.add_argument("--save_dir", type=str, default='./overlay_out', help="Where to save visualizations")
     ap.add_argument("--save_overlays", action="store_true", help="Also save per-joint heatmap overlays on the RGB")
@@ -245,7 +245,7 @@ def main():
     ap.add_argument("--alpha", type=float, default=0.45, help="Overlay alpha for heatmaps")
     ap.add_argument("--point_size", type=int, default=8, help="Size of joint points")
     args = ap.parse_args()
-    
+
     # Restore original argv
     sys.argv = original_argv
 
@@ -256,7 +256,7 @@ def main():
     logits, probs = predict_heatmaps(model, x)
 
     # Log quick stats
-    print(f"Pred logits range: {logits.min().item():.3f}..{logits.max().item():.3f}")
+    # print(f"Pred logits range: {logits.min().item():.3f}..{logits.max().item():.3f}")
     print(f"Pred probs range : {probs.min().item():.3f}..{probs.max().item():.3f}")
 
     # Grid of probabilities

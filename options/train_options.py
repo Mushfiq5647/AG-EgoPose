@@ -31,7 +31,7 @@ class TrainOptions(BaseOptions):
         self.parser.add_argument('--weight_decay', type=float, default=0.0,
                                  help='weight decay')
 
-        self.parser.add_argument('--lambda_mpjpe', type=float, default=10.0,
+        self.parser.add_argument('--lambda_mpjpe', type=float, default=5.0,
                                  help='weight for loss_mpjpe')
         self.parser.add_argument('--lambda_heatmap', type=float, default=1.0,
                                  help='weight for loss_heatmap')

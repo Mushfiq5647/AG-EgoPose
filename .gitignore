@@ -12,14 +12,10 @@ utils/trained_heatmaps
 utils/mo2cap2
 utils/sceneego
 testing.py
-generate_homography_and_adjust.py
-generate_3D_plot_point.py
-generate_egopw.py
-generate_global-ego.py
-test_egoglobal.txt
-update_homography.py
-update_homography_number.py
-joint_points_output
-# Ignore Python cache files
+generate_heatmaps_egopw.py
+generate_heatmaps_sceneego.py
+generate_heatmaps_mo2cap2.py
+visualize_3d_poses.py
+visualize_heatmap_sceneego.py
 
 

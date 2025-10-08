@@ -7,7 +7,7 @@ import h5py
 # Use THIS heatmap function EXACTLY as provided
 # ---------------------------------------------
 
-def gaussian_heatmaps(joints_xy_img, img_wh, hm_size=128, sigma=2.0):
+def gaussian_heatmaps(joints_xy_img, img_wh, hm_size=64, sigma=1.2):
     W0, H0 = img_wh
     J = joints_xy_img.shape[0]
     Hm = Wm = hm_size
@@ -80,7 +80,7 @@ def get_frame_image_size(img_frame):
 # Core: write heatmaps back into HDF5 as 'UpdatedHeatmap'
 # ---------------------------------------------
 
-def write_heatmaps_inplace(h5_path, hm_size, sigma, offset_x, offset_y, expect_joints=15, overwrite_dataset=False):
+def write_heatmaps_inplace(h5_path, hm_size, sigma, offset_x, offset_y, expect_joints=15, overwrite_dataset=True):
     with h5py.File(h5_path, 'a') as f:  # 'a' = read/write, create if needed
         if 'Annot2D' not in f or 'Images' not in f:
             print(f"[WARN] {h5_path}: missing 'Annot2D' or 'Images'. Skipping.")
@@ -143,7 +143,7 @@ def write_heatmaps_inplace(h5_path, hm_size, sigma, offset_x, offset_y, expect_j
 def main():
     ap = argparse.ArgumentParser(description="Write (15,128,128) heatmaps back into each HDF5 under dataset 'UpdatedHeatmap'.")
     ap.add_argument('--train_txt', type=str, default='train_mo2cap2.txt', help='Each line: directory or .h5/.hdf5 file')
-    ap.add_argument('--hm_size', type=int, default=128, help='Heatmap size (square)')
+    ap.add_argument('--hm_size', type=int, default=64, help='Heatmap size (square)')
     ap.add_argument('--sigma', type=float, default=1.2, help='Gaussian sigma in heatmap coords')
     ap.add_argument('--offset_x', type=float, default=-35, help='Offset added to x (pixels)')
     ap.add_argument('--offset_y', type=float, default=5, help='Offset added to y (pixels)')

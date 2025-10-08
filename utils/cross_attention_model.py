@@ -22,7 +22,7 @@ class JointIDEncoding(nn.Module):
 
 
 class HeatmapToJointFeatures(nn.Module):
-    def __init__(self, heatmap_size=64, feature_dim=64, method='conv_pool'):
+    def __init__(self, heatmap_size=64, feature_dim=128, method='conv_pool'):
         super(HeatmapToJointFeatures, self).__init__()
         self.method = method
         self.feature_dim = feature_dim
@@ -32,18 +32,33 @@ class HeatmapToJointFeatures(nn.Module):
             self.pool = nn.AdaptiveAvgPool2d((1, 1))
             self.proj = nn.Linear(1, feature_dim)
             
+        # elif method == 'conv_pool':
+        #     # Convolutional feature extraction
+        #     self.conv_layers = nn.Sequential(
+        #         nn.Conv2d(1, 32, 3, padding=1),
+        #         nn.ReLU(),
+        #         nn.Conv2d(32, 64, 3, stride=2, padding=1),
+        #         nn.ReLU(),
+        #         nn.AdaptiveAvgPool2d((4, 4))
+        #     )
+        #     self.proj = nn.Linear(64 * 16, feature_dim)
+        #     self.layer_norm = nn.LayerNorm(feature_dim)  # Normalize heatmap features
+
         elif method == 'conv_pool':
-            # Convolutional feature extraction
+            # Balanced approach: Light conv + spatial pooling
             self.conv_layers = nn.Sequential(
-                nn.Conv2d(1, 32, 3, padding=1),
+                nn.Conv2d(1, 16, 3, padding=1),  # 64x64 -> 64x64
                 nn.ReLU(),
-                nn.Conv2d(32, 64, 3, stride=2, padding=1),
+                nn.Conv2d(16, 32, 3, stride=2, padding=1),  # 64x64 -> 32x32
                 nn.ReLU(),
-                nn.AdaptiveAvgPool2d((4, 4))
+                nn.Conv2d(32, 64, 3, stride=2, padding=1),  # 32x32 -> 16x16
+                nn.ReLU(),
+                nn.AdaptiveAvgPool2d((4, 4))  # 16x16 -> 4x4
             )
-            self.proj = nn.Linear(64 * 16, feature_dim)
-            self.layer_norm = nn.LayerNorm(feature_dim)  # Normalize heatmap features
-            
+            self.proj = nn.Linear(64 * 4 * 4, feature_dim)  # 64*16 -> 128
+            self.layer_norm = nn.LayerNorm(feature_dim)
+
+
         elif method == 'spatial_attention':
             # Spatial attention pooling
             self.spatial_attention = nn.Sequential(
@@ -73,9 +88,9 @@ class HeatmapToJointFeatures(nn.Module):
             features = self.proj(pooled)  # (B*T*J, feature_dim)
             
         elif self.method == 'conv_pool':
-            # Convolutional features
+            # Balanced conv + spatial pooling
             conv_features = self.conv_layers(heatmaps_flat)  # (B*T*J, 64, 4, 4)
-            conv_features = conv_features.view(B*T*J, -1)  # (B*T*J, 64*16)
+            conv_features = conv_features.view(B*T*J, -1)  # (B*T*J, 64*4*4)
             features = self.proj(conv_features)  # (B*T*J, feature_dim)
             features = self.layer_norm(features)  # Normalize feature scales
             
@@ -95,7 +110,7 @@ class HeatmapToJointFeatures(nn.Module):
 class SpatialJointTransformer(nn.Module):
     """Spatial transformer for modeling joint relationships"""
     
-    def __init__(self, feature_dim=64, num_heads=4, num_layers=3, dropout=0.1):
+    def __init__(self, feature_dim=128, num_heads=4, num_layers=3, dropout=0.1):
         super(SpatialJointTransformer, self).__init__()
         self.feature_dim = feature_dim
 
@@ -124,15 +139,11 @@ class SpatialJointTransformer(nn.Module):
             enhanced_joints: (B, T, J, feature_dim)
         """
         B, T, J, feature_dim = joint_features.shape
-        
-        # Skip positional encoding for now (causing test overfitting)
-        # joint_features = self.joint_id(joint_features)
-        
-        # Reshape for transformer: (B*T, J, feature_dim)
+
         joint_input = joint_features.view(B*T, J, feature_dim)
         
-        # Apply transformer across joints
-        joint_input = self.layer_norm(joint_input)
+        # Apply transformer across joints (remove layer norm before transformer)
+        # joint_input = self.layer_norm(joint_input)
         enhanced_joints = self.transformer(joint_input)  # (B*T, J, feature_dim)
         
         # Layer normalization
@@ -142,6 +153,65 @@ class SpatialJointTransformer(nn.Module):
         enhanced_joints = enhanced_joints.view(B, T, J, feature_dim)
         
         return enhanced_joints
+
+
+class PoseDecoder(nn.Module):
+    """Transformer decoder with joint queries for 3D pose prediction"""
+
+    def __init__(self, joint_dim=128, motion_dim = 384, num_heads=4, num_layers=3, hidden=128):
+        super().__init__()
+
+        # Joint queries: learnable embeddings for each joint
+        self.joint_queries = nn.Parameter(torch.randn(15, joint_dim))
+        nn.init.normal_(self.joint_queries, std=0.02)
+        self.motion_proj = nn.Linear(motion_dim, joint_dim)
+        # Project concatenated memory back to joint_dim
+        self.memory_proj = nn.Sequential(
+            nn.Linear(joint_dim*2, joint_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(joint_dim, joint_dim)
+        )
+
+        # Transformer decoder
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=joint_dim,
+            nhead=num_heads,
+            dim_feedforward=joint_dim * 4,
+            batch_first=True
+        )
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers)
+
+        self.pose_head = nn.Sequential(
+            nn.Linear(joint_dim, hidden),
+            nn.LeakyReLU(negative_slope=0.1),  # Better for negative values
+            nn.Dropout(0.1),
+            nn.Linear(hidden, hidden//2),
+            nn.LeakyReLU(negative_slope=0.1),  # Better for negative values
+            nn.Dropout(0.1),
+            nn.Linear(hidden//2, 3)
+        )
+
+    def forward(self, spatial_joint_features, motion_features):
+        B, T, J, D = spatial_joint_features.shape
+
+        # Joint queries attend to spatial features
+        spatial_joint_features = spatial_joint_features.view(B * T, J, D)
+        motion_features = self.motion_proj(motion_features)
+        motion_tiled = motion_features.unsqueeze(2).expand(-1, -1, J, -1)  # (B,T,J,384)
+        motion_tiled = motion_tiled.view(B * T, J, -1)
+        print("Motion tiled:", motion_tiled.shape)
+        print("Spatial tiled:", spatial_joint_features.shape)
+        memory = torch.cat([spatial_joint_features,motion_tiled], dim=-1)
+        print("Memory shape", memory.shape)
+        # Project memory back to joint_dim for transformer decoder
+        memory = self.memory_proj(memory)  # (B*T, J, joint_dim)
+        # # motion_memory = self.memory_proj(motion_tiled)  # (B*T, J, joint_dim)
+        # # print("Motion memory tiled:", motion_memory.shape)
+        queries = self.joint_queries.expand(B * T, 15, -1)
+        decoded = self.decoder(tgt=queries, memory=memory)
+        poses_3d = self.pose_head(decoded)
+
+        return poses_3d.view(B, T, 15, 3)
 
 
 class MotionPoseCrossAttention(nn.Module):
@@ -344,9 +414,7 @@ class DualStreamPoseEstimator(nn.Module):
         """
         B, T = image_features.shape[:2]
 
-        # Motion stream: ActionFormer for temporal understanding
-        with torch.no_grad():  # Keep ActionFormer frozen
-            motion_features = self.actionformer_model(image_features)  # (B, T, motion_dim)
+        motion_features = self.actionformer_model(image_features)  # (B, T, motion_dim)
 
         # Pose stream: Heatmaps to joint features
         joint_features = self.heatmap_converter(heatmaps)  # (B, T, J, joint_dim)

@@ -85,7 +85,7 @@ def dataloader_full(opt, transform, mode='train', id=None):
         datasets = EgoGTAWindowDataset(opt, transform, mode)
     elif opt.model == "combined":
         ds1 = EgoPwWindowDataset(opt, transform, mode)
-        ds2 = EgoGTAWindowDataset(opt, transform, mode)
+        ds2 = SceneEgoWindowDataset(opt, transform, mode)
         datasets = ConcatDataset([ds1, ds2])
     dataset = torch.utils.data.DataLoader(
         datasets,
@@ -105,7 +105,7 @@ class Mo2Cap2WindowDataset(torch.utils.data.Dataset):
                  transform,         # torchvision transform for RGB frames
                  mode,
                  window_size=64,
-                 stride = 16):
+                 stride = 32):
         super().__init__()
         self.transform   = transform
         self.window_size = window_size
@@ -171,7 +171,7 @@ class Mo2Cap2WindowDataset(torch.utils.data.Dataset):
 
         return {
             'input_rgb':    imgs,   # (T,3,H,W)
-            'gt_heatmap':   hms,    # (T,J,32,32)
+            # 'gt_heatmap':   hms,    # (T,J,32,32)
             'gt_local_pose':poses   # (T,J,3)
         }
 
@@ -195,7 +195,7 @@ class EgoPwWindowDataset(torch.utils.data.Dataset):
 
         for seq_idx, base in enumerate(seq_dirs):
             img_dir = os.path.join(base, 'imgs')
-            hm_dir = os.path.join(base, 'heatmap64')
+            hm_dir = os.path.join(base, 'heatmap64_2.0')
 
             # Load ground-truth list and build map
             with open(os.path.join(base, 'pseudo_gt.pkl'), 'rb') as f:
@@ -276,7 +276,7 @@ class EgoPwWindowDataset(torch.utils.data.Dataset):
 
         return {
             'input_rgb':    img_batch,
-            # 'gt_heatmap':   hm_batch,
+            'gt_heatmap':   hm_batch,
             'gt_local_pose':pose_batch
         }
 
@@ -300,6 +300,7 @@ class SceneEgoWindowDataset(torch.utils.data.Dataset):
 
         for seq_idx, base in enumerate(seq_dirs):
             img_dir = os.path.join(base, 'imgs')
+            hm_dir = os.path.join(base, 'heatmap64_2.0')
 
             # Load annotation data
             with open(os.path.join(base, 'local_pose_gt.pkl'), 'rb') as f:
@@ -358,20 +359,20 @@ class SceneEgoWindowDataset(torch.utils.data.Dataset):
             # 5) Create sliding-window indices on filtered list
             L = len(full_paths)
             for start in range(0, L - window_size + 1, stride):
-                self.index.append((seq_idx, start))
+                self.index.append((seq_idx, hm_dir, start))
 
     def __len__(self):
         return len(self.index)
 
     def __getitem__(self, idx):
-        seq_idx, start = self.index[idx]
+        seq_idx, hm_dir, start = self.index[idx]
         img_paths = self.sequences[seq_idx]
         gt_map = self.gt_dicts[seq_idx]
 
         # Extract one window of valid images only
         window = img_paths[start:start + self.window_size]
 
-        imgs, poses = [], []
+        imgs, hms, poses = [], [], []
         for p in window:
             name = os.path.basename(p)
             if name.startswith("img_"):
@@ -390,18 +391,25 @@ class SceneEgoWindowDataset(torch.utils.data.Dataset):
                 img = self.transform(img)
             imgs.append(img)
 
+            heatmap_filename = "heatmap_" + suffix.replace('.jpg', '.npy')
+            hm_path = os.path.join(hm_dir, heatmap_filename)
+            hm = np.load(hm_path)
+            hms.append(torch.from_numpy(hm).float())
+
         # Stack into tensors
         img_batch  = torch.stack(imgs,  dim=0)  # (T,3,H,W)
+        hm_batch = torch.stack(hms, dim=0)  # (T,J,H,W)
         pose_batch = torch.stack(poses, dim=0)  # (T,J,3)
 
         return {
             'input_rgb':    img_batch,
+            'gt_heatmap': hm_batch,
             'gt_local_pose':pose_batch
         }
 
 
 class EgoGTAWindowDataset(torch.utils.data.Dataset):
-    def __init__(self, opt, transform, mode, window_size=64, stride=16):
+    def __init__(self, opt, transform, mode, window_size=64, stride=32):
         self.transform = transform
         self.window_size = window_size
         self.stride = stride
@@ -479,7 +487,7 @@ class EgoGTAWindowDataset(torch.utils.data.Dataset):
 
 
 class EgoGlobalTestDataset(torch.utils.data.Dataset):
-    def __init__(self, opt, transform, mode, window_size=64, stride=64):
+    def __init__(self, opt, transform, mode, window_size=64, stride=32):
         self.transform = transform
         self.window_size = window_size
         self.stride = stride

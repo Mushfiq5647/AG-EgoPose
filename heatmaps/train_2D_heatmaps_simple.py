@@ -24,7 +24,7 @@ print("Using device:", device)
 
 def main(args):
     # Create output directory
-    heatmap_dir = './utils/trained_heatmaps/bce'
+    heatmap_dir = './utils/trained_heatmaps/bce_combined'
     os.makedirs(heatmap_dir, exist_ok=True)
     
     # Create log file for epoch results
@@ -51,6 +51,7 @@ def main(args):
     # Simple loss and optimizer
     pos_weight = torch.tensor(12.0, device=device)
     criterion =  torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction="mean")
+    # criterion = nn.MSELoss(reduction='mean')
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.num_epochs)
     
@@ -74,7 +75,7 @@ def main(args):
             
             # Process ALL images at once (more efficient and stable)
             img_flat = images.view(-1, 3, args.crop_size, args.crop_size)  # [B*T, 3, H, W]
-            heatmaps_flat = heatmaps.view(B*T, 15, 64, 64)  # [B*T, 15, H, W]
+            heatmaps_flat = heatmaps.view(B*T, 15, 64,64)  # [B*T, 15, H, W]
             
             # Debug: Check ground truth heatmaps
             if i == 0:  # Only print for first batch
@@ -183,17 +184,17 @@ if __name__ == '__main__':
     parser.add_argument('--num_heatmap', type=int, default=15, help='Number of heatmap channels')
 
     # Train
-    parser.add_argument('--learning_rate', type=float, default=5e-4)  # Much smaller LR to prevent gradient explosion
+    parser.add_argument('--learning_rate', type=float, default=1e-3)  # Much smaller LR to prevent gradient explosion
     parser.add_argument('--clip_value', type=float, default=5.0)
-    parser.add_argument('--num_epochs', type=int, default=25)  # Reasonable for heatmaps
-    parser.add_argument('--batch_size', type=int, default=8)
+    parser.add_argument('--num_epochs', type=int, default=30)  # Reasonable for heatmaps
+    parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--log_step', type=int, default=10)
     parser.add_argument('--save_interval', type=int, default=5)  # Save every 5 epochs
 
 
     # Data
-    parser.add_argument('--crop_size', type=int, default=224)
+    parser.add_argument('--crop_size', type=int, default=256)
     
     args = parser.parse_args()
     main(args)

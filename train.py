@@ -13,9 +13,10 @@ from options.train_options import TrainOptions
 from utils.data_loader import dataloader_full
 from utils.cross_attention_model import HeatmapToJointFeatures
 from utils.cross_attention_model import SpatialJointTransformer
+from utils.cross_attention_model import PoseDecoder
 from heatmaps.network_heatmap import HeatMap_Network
 from utils.loss import LossFuncLimb, LossFuncMPJPE, LossFuncCosSim  # Add bone length loss import
-from utils.model import  FeatureEncoder, PoseDecoder
+from utils.model import  FeatureEncoder
 import socket
 print("Running on host:", socket.gethostname())
 torch.set_printoptions(threshold=torch.inf)
@@ -136,7 +137,7 @@ def main(args):
         os.makedirs(args.model_path)
 
     # Create loss log file
-    loss_log_path = 'loss_log.txt'
+    loss_log_path = 'loss_log_egopw_bce.txt'
     with open(loss_log_path, 'w') as f:
         f.write("Epoch, Train_MPJPE, Train_Cos, Train_Bone, Train_Total, Best_Total \n")
     
@@ -172,7 +173,7 @@ def main(args):
         
         # Debug: Test heatmap output range with a dummy input
         with torch.no_grad():
-            dummy_input = torch.randn(1, 3, 224, 224).to(device)
+            dummy_input = torch.randn(1, 3, 256,256).to(device)
             dummy_output = net_heatmap(dummy_input)
             print(f"Heatmap model output range: {dummy_output.min().item():.4f} to {dummy_output.max().item():.4f}")
             print(f"Heatmap model output mean/std: {dummy_output.mean().item():.4f}/{dummy_output.std().item():.4f}")
@@ -180,10 +181,11 @@ def main(args):
         print(f"Warning: Pre-trained heatmap model not found at {args.heatmap_trained_path}")
         print("Will use ground truth heatmaps for training")
     
-    heatmap_embedding = HeatmapToJointFeatures(heatmap_size=64, feature_dim=64, method='conv_pool').to(device)
+    heatmap_embedding = HeatmapToJointFeatures(heatmap_size=64, feature_dim=args.hm_embed_dim, method='conv_pool').to(device)
     encoder = FeatureEncoder(actionformer_feature_extractor).to(device)
     spatial_joint_transformer = SpatialJointTransformer(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
-    pose_decoder = PoseDecoder(motion_dim=384, joint_dim=64, out_dim=3).to(device)
+    pose_decoder = PoseDecoder(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
+    # pose_decoder = PoseDecoder(motion_dim=384, joint_dim=args.hm_embed_dim, out_dim=3).to(device)
     print("Models initialized")
 
     print("Freezing ActionFormer...")
@@ -192,7 +194,7 @@ def main(args):
     print("ActionFormer frozen")
 
     #Initialize weights
-    pose_decoder.apply(initialize_weights)
+    pose_decoder.apply(initialize_gelu_weights)
     spatial_joint_transformer.apply(initialize_gelu_weights)
     heatmap_embedding.apply(initialize_relu_weights)
 
@@ -200,6 +202,9 @@ def main(args):
     limb_loss_func = LossFuncLimb().to(device)
     mpjpe_loss_func = LossFuncMPJPE().to(device)
     cos_sim_loss_func = LossFuncCosSim().to(device)
+
+    enc_params = sum(p.numel() for p in encoder.parameters() if p.requires_grad)
+    print("encoder trainable params:", enc_params)
 
     params = (
             list(encoder.parameters()) +
@@ -211,13 +216,13 @@ def main(args):
     optimizer = torch.optim.Adam(params, lr=args.learning_rate)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
-            T_max=30,
+            T_max=40,
             eta_min=1e-4
         )
     
     # Mixed precision training for memory efficiency
     scaler = GradScaler(device='cuda')
-    model_dir = os.path.abspath('./utils/trained_egopwfull_mo2cap2')
+    model_dir = os.path.abspath('./utils/trained_egopwtrain_bce')
     total_step = len(data_loader)
     for epoch in range(args.num_epochs):
         print("Printing epoch:", epoch)
@@ -241,37 +246,35 @@ def main(args):
             # Process ALL images at once (more efficient)
             with torch.no_grad():
                 all_images_flat = images.view(-1, 3, H_img, W_img)  # [B*T, 3, H, W]
-                print("Image shape", all_images_flat.shape)
                 all_heatmaps = net_heatmap(all_images_flat)  # [B*T, J, H_hm, W_hm]
                 all_heatmaps = torch.sigmoid(all_heatmaps)  # Convert logits to 0-1 range for BCE with logits model
                 heatmaps = all_heatmaps.view(B, T, 15, H_hm, W_hm)  # [B, T, 15, H_hm, W_hm]
             
-            # Forward pass with mixed precision
+            # Forward pass with autocast
             with autocast(device_type='cuda'):
                 motion_features = encoder(images)
-                print("Motion features", motion_features.shape)
+                print("Motion features shape:", motion_features.shape)
                 heatmap_features = heatmap_embedding(heatmaps)
-                print("Heatmap features", heatmap_features.shape)
+                print("Heatmap shape", heatmap_features.shape)
                 spatial_joint_features = spatial_joint_transformer(heatmap_features)
-                print("Spatial Transformers",spatial_joint_features.shape)
-                pose_logits = pose_decoder(spatial_joint_features, motion_features)
-            # Reshape to pose format and convert to FP32 for loss computation
-            final = pose_logits.view(B, T, num_joints, 3).float()  # Convert to FP32
-            
-            # Reshape for loss computation
-            final_reshaped = final.reshape(B * T, num_joints, 3)
-            gt_reshaped = gt_egoposes.reshape(B * T, num_joints, 3)
-            
-            # Compute losses (all in FP32)
-            mpjpe_loss = mpjpe_loss_func(final_reshaped, gt_reshaped)
-            bone_length_loss = limb_loss_func(final_reshaped, gt_reshaped)
-            cos_loss = cos_sim_loss_func(final_reshaped, gt_reshaped)
-            
-            # Combined loss
-            final_loss = (
-                         opt.lambda_mpjpe * mpjpe_loss + 
-                         opt.lambda_cos_sim * cos_loss + 
-                         opt.lambda_bone_length * bone_length_loss)
+                pose_logits = pose_decoder(heatmap_features, motion_features)
+                # Reshape to pose format and convert to FP32 for loss computation
+                final = pose_logits.view(B, T, num_joints, 3).float()  # Convert to FP32
+
+                # Reshape for loss computation
+                final_reshaped = final.reshape(B * T, num_joints, 3)
+                gt_reshaped = gt_egoposes.reshape(B * T, num_joints, 3)
+                
+                # Compute losses (all in FP32)
+                mpjpe_loss = mpjpe_loss_func(final_reshaped, gt_reshaped)
+                bone_length_loss = limb_loss_func(final_reshaped, gt_reshaped)
+                cos_loss = cos_sim_loss_func(final_reshaped, gt_reshaped)
+                
+                # Combined loss
+                final_loss = (
+                             opt.lambda_mpjpe * mpjpe_loss + 
+                             opt.lambda_cos_sim * cos_loss + 
+                             opt.lambda_bone_length * bone_length_loss)
             
             # Store losses for epoch averaging
             train_mpjpe_losses.append(mpjpe_loss.item())
@@ -282,19 +285,16 @@ def main(args):
             print(f"MPJPE: {mpjpe_loss:.4f}, "
                   f"Cos: {cos_loss.item():.4f}, Bone: {bone_length_loss.item():.4f}")
 
-            # Backward and optimize with mixed precision
+            # Backward and optimize with AMP
             optimizer.zero_grad()
             scaler.scale(final_loss).backward()
             
-            # Unscale gradients for clipping
+            # Gradient clipping with scaler
             scaler.unscale_(optimizer)
-            
-            # Gradient clipping
             total_norm = torch.nn.utils.clip_grad_norm_(params, args.clip_value)
             
             # Optional: Monitor gradient norms for debugging
             if i % args.log_step == 0:
-                print(f'Total gradient norm: {total_norm:.4f}')
                 print(f'Encoder grad norm: {get_grad_norm(encoder):.4f}')
                 print(f'Decoder grad norm: {get_grad_norm(pose_decoder):.4f}')
                 print(f'Heatmap grad norm: {get_grad_norm(heatmap_embedding):.4f}')
@@ -302,15 +302,14 @@ def main(args):
                 
                 # Monitor learning rate
                 current_lr = optimizer.param_groups[0]['lr']
-                print(f'Current learning rate: {current_lr:.6f}')
             
             # Step optimizer with scaler
             scaler.step(optimizer)
             scaler.update()
             
             if i % args.log_step == 0:
-                print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Perplexity: {:5.4f}'
-                      .format(epoch, args.num_epochs, i, total_step, final_loss.item(), np.exp(final_loss.item())))
+                print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f},'
+                      .format(epoch, args.num_epochs, i, total_step, final_loss.item()))
                 # torch.save(decoder.state_dict(), os.path.join(model_dir, 'decoder-{}-{}.ckpt'.format(epoch + 1, i + 1)))
                 # torch.save(encoder.state_dict(), os.path.join(model_dir, 'encoder-{}-{}.ckpt'.format(epoch + 1, i + 1)))
 
@@ -340,7 +339,6 @@ def main(args):
         
         # Save periodic checkpoints
         if (epoch + 1) % args.save_interval == 0:
-            print(f"💾 Saving periodic checkpoint at epoch {epoch + 1}")
             torch.save(pose_decoder.state_dict(),
                        os.path.join(model_dir, f'pose-decoder-{epoch + 1:03d}.ckpt'))
             torch.save(encoder.state_dict(),
@@ -394,13 +392,13 @@ if __name__ == '__main__':
                         help='directory for resized images')
 
     parser.add_argument('--embed_feature_dim', type=int, default=256, help='dimension of word embedding vectors')
-    parser.add_argument('--hm_embed_dim', type=int, default=64, help='dimension of word embedding vectors')
+    parser.add_argument('--hm_embed_dim', type=int, default=128, help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int, default=512, help='dimension of lstm hidden states')
     parser.add_argument('--num_layers', type=int, default=3, help='number of layers in lstm')
     parser.add_argument('--learning_rate', type=float, default=0.001)
-    parser.add_argument('--clip_value', type=float, default=1.0)
+    parser.add_argument('--clip_value', type=float, default=5.0)
     parser.add_argument('--seq_length', type=int, default=64, help='length of the pose/video sequences')
-    parser.add_argument('--crop_size', type=int, default=224, help='size for randomly cropping images')
+    parser.add_argument('--crop_size', type=int, default=256, help='size for randomly cropping images')
 
     parser.add_argument('--num_epochs', type=int, default=30)
     parser.add_argument('--batch_size', type=int, default=8)
@@ -409,7 +407,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--log_step', type=int, default=10, help='step size for prining log info')
     parser.add_argument('--save_step', type=int, default=100, help='step size for saving trained models')
-    parser.add_argument('--save_interval', type=int, default=5, help='save checkpoint every N epochs')
+    parser.add_argument('--save_interval', type=int, default=2, help='save checkpoint every N epochs')
 
     args = parser.parse_args()
     print(args)

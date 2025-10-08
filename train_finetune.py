@@ -13,9 +13,10 @@ from options.train_options import TrainOptions
 from utils.data_loader import dataloader_full
 from utils.cross_attention_model import HeatmapToJointFeatures
 from utils.cross_attention_model import SpatialJointTransformer
+from utils.cross_attention_model import PoseDecoder
 from heatmaps.network_heatmap import HeatMap_Network
 from utils.loss import LossFuncLimb, LossFuncMPJPE, LossFuncCosSim  # Add bone length loss import
-from utils.model import  FeatureEncoder, PoseDecoder
+from utils.model import  FeatureEncoder
 import socket
 print("Running on host:", socket.gethostname())
 torch.set_printoptions(threshold=torch.inf)
@@ -78,34 +79,6 @@ coords_per_joint = 3
 #
 # edge_index = torch.tensor(edge_index, dtype=torch.long)
 
-def initialize_weights(m):
-    if isinstance(m, nn.Linear):
-        nn.init.kaiming_uniform_(
-            m.weight,
-            a=0.1,  # Better for LeakyReLU
-            nonlinearity='leaky_relu'
-        )
-        if m.bias is not None:
-            nn.init.zeros_(m.bias)
-
-def initialize_gelu_weights(m):
-    if isinstance(m, nn.Linear):
-        nn.init.xavier_uniform_(m.weight)  # More conservative, standard for transformers
-        if m.bias is not None:
-            nn.init.zeros_(m.bias)
-
-# heatmap_embedding: ReLU - use ReLU initialization
-def initialize_relu_weights(m):
-    if isinstance(m, nn.Linear):
-        nn.init.kaiming_uniform_(
-            m.weight,
-            a=0,  # For ReLU
-            nonlinearity='relu'
-        )
-        if m.bias is not None:
-            nn.init.zeros_(m.bias)
-
-
 def check_nan(tensor, name, epoch, i):
     if torch.isnan(tensor).any() or torch.isinf(tensor).any():
         print(f"NaN detected in {name}! Epoch: {epoch}, Iteration: {i}")
@@ -135,7 +108,7 @@ def main(args):
         os.makedirs(args.model_path)
 
     # Create loss log file
-    loss_log_path = 'loss_log_finetune.txt'
+    loss_log_path = 'loss_log_finetune_cross.txt'
     with open(loss_log_path, 'w') as f:
         f.write("Epoch, Train_MPJPE, Train_Cos, Train_Bone, Train_Total \n")
 
@@ -156,10 +129,10 @@ def main(args):
     
     # Initialize models
     net_heatmap = HeatMap_Network(opt, model_name='resnet18').to(device)
-    heatmap_embedding = HeatmapToJointFeatures(heatmap_size=64, feature_dim=64, method='conv_pool').to(device)
+    heatmap_embedding = HeatmapToJointFeatures(heatmap_size=64, feature_dim=128, method='conv_pool').to(device)
     encoder = FeatureEncoder(actionformer_feature_extractor).to(device)
     spatial_joint_transformer = SpatialJointTransformer(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
-    pose_decoder = PoseDecoder(motion_dim=384, joint_dim=64, out_dim=3).to(device)
+    pose_decoder = PoseDecoder(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
     print("Models initialized")
 
     print("Freezing ActionFormer...")
@@ -230,13 +203,11 @@ def main(args):
     optimizer = torch.optim.Adam(params, lr=args.learning_rate)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
-            T_max=20,
+            T_max=40,
             eta_min=1e-4
         )
-    # No mixed precision - using full precision training
-    model_dir = os.path.abspath('./utils/sceneego')
-    # Mixed precision training for memory efficiency
-    scaler = GradScaler(device='cuda')
+    # Full precision training
+    model_dir = os.path.abspath('./utils/sceneego_cross')
     total_step = len(data_loader)
     for epoch in range(args.num_epochs):
         print("Printing epoch:", epoch)
@@ -265,15 +236,14 @@ def main(args):
                 all_heatmaps = torch.sigmoid(all_heatmaps)  # Convert logits to 0-1 range for BCE with logits model
                 heatmaps = all_heatmaps.view(B, T, 15, H_hm, W_hm)  # [B, T, 15, H_hm, W_hm]
 
-            # Forward pass with mixed precision
-            with autocast(device_type='cuda'):
-                motion_features = encoder(images)
-                print("Motion features", motion_features.shape)
-                heatmap_features = heatmap_embedding(heatmaps)
-                print("Heatmap features", heatmap_features.shape)
-                spatial_joint_features = spatial_joint_transformer(heatmap_features)
-                print("Spatial Transformers", spatial_joint_features.shape)
-                pose_logits = pose_decoder(spatial_joint_features, motion_features)
+            # Forward pass (FP32)
+            motion_features = encoder(images)
+            print("Motion features", motion_features.shape)
+            heatmap_features = heatmap_embedding(heatmaps)
+            print("Heatmap features", heatmap_features.shape)
+            spatial_joint_features = spatial_joint_transformer(heatmap_features)
+            print("Spatial Transformers", spatial_joint_features.shape)
+            pose_logits = pose_decoder(heatmap_features, motion_features)
             # Reshape to pose format and convert to FP32 for loss computation
             final = pose_logits.view(B, T, num_joints, 3).float()  # Convert to FP32
 
@@ -301,12 +271,9 @@ def main(args):
             print(f"MPJPE: {mpjpe_loss:.4f}, "
                   f"Cos: {cos_loss.item():.4f}, Bone: {bone_length_loss.item():.4f}")
 
-            # Backward and optimize with mixed precision
+            # Backward and optimize (FP32)
             optimizer.zero_grad()
-            scaler.scale(final_loss).backward()
-
-            # Unscale gradients for clipping
-            scaler.unscale_(optimizer)
+            final_loss.backward()
 
             # Gradient clipping
             total_norm = torch.nn.utils.clip_grad_norm_(params, args.clip_value)
@@ -323,9 +290,8 @@ def main(args):
                 current_lr = optimizer.param_groups[0]['lr']
                 print(f'Current learning rate: {current_lr:.6f}')
 
-            # Step optimizer with scaler
-            scaler.step(optimizer)
-            scaler.update()
+            # Step optimizer
+            optimizer.step()
 
             if i % args.log_step == 0:
                 print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Perplexity: {:5.4f}'
@@ -405,10 +371,10 @@ if __name__ == '__main__':
     parser.add_argument('--heatmap_trained_path', type=str, required=True, help='path for trained 2D heatmap')
     
     # Pre-trained model paths for fine-tuning
-    parser.add_argument('--encoder_path', type=str, default='utils/trained_egopwfull_mo2cap2/encoder-best.ckpt', help='path for pre-trained encoder')
-    parser.add_argument('--decoder_path', type=str, default= 'utils/trained_egopwfull_mo2cap2/pose-decoder-best.ckpt', help='path for pre-trained decoder')
-    parser.add_argument('--heatmap_path', type=str, default='utils/trained_egopwfull_mo2cap2/heatmap_embedding-best.ckpt',help = 'path for pre-trained heatmap embedding')
-    parser.add_argument('--spatial_transformer_path', type=str, default = './utils/trained_egopwfull_mo2cap2/spatial_transformer-best.ckpt', help='path for pre-trained spatial transformer')
+    parser.add_argument('--encoder_path', type=str, default='utils/trained_egopwtrain_bce_cross/encoder-best.ckpt', help='path for pre-trained encoder')
+    parser.add_argument('--decoder_path', type=str, default= 'utils/trained_egopwtrain_bce_cross/pose-decoder-best.ckpt', help='path for pre-trained decoder')
+    parser.add_argument('--heatmap_path', type=str, default='utils/trained_egopwtrain_bce_cross/heatmap_embedding-best.ckpt',help = 'path for pre-trained heatmap embedding')
+    parser.add_argument('--spatial_transformer_path', type=str, default = './utils/trained_egopwtrain_bce_cross/spatial_transformer-best.ckpt', help='path for pre-trained spatial transformer')
     parser.add_argument('--image_dir', type=str, default='/data/My_Backup/UnrealEgo/scripts/data/UnrealEgoData',
                         help='directory for resized images')
     parser.add_argument('--h_dir', type=str, default='D:/Dataset/EgoPW_dataset/EgoPW_dataset_release',
@@ -417,22 +383,22 @@ if __name__ == '__main__':
                         help='directory for resized images')
 
     parser.add_argument('--embed_feature_dim', type=int, default=256, help='dimension of word embedding vectors')
-    parser.add_argument('--hm_embed_dim', type=int, default=64, help='dimension of word embedding vectors')
+    parser.add_argument('--hm_embed_dim', type=int, default=128, help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int, default=512, help='dimension of lstm hidden states')
     parser.add_argument('--num_layers', type=int, default=3, help='number of layers in lstm')
     parser.add_argument('--learning_rate', type=float, default=0.001)  # Lower learning rate for fine-tuning
-    parser.add_argument('--clip_value', type=float, default=1.0)
+    parser.add_argument('--clip_value', type=float, default=5.0)
     parser.add_argument('--seq_length', type=int, default=64, help='length of the pose/video sequences')
-    parser.add_argument('--crop_size', type=int, default=224, help='size for randomly cropping images')
+    parser.add_argument('--crop_size', type=int, default=256, help='size for randomly cropping images')
 
-    parser.add_argument('--num_epochs', type=int, default=20)  # Fewer epochs for fine-tuning
-    parser.add_argument('--batch_size', type=int, default=8)
+    parser.add_argument('--num_epochs', type=int, default=40)  # Fewer epochs for fine-tuning
+    parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--lambda_heatmap', type=float, default=0.1, help='weight for heatmap loss')
 
     parser.add_argument('--log_step', type=int, default=20, help='step size for prining log info')
     parser.add_argument('--save_step', type=int, default=20, help='step size for saving trained models')
-    parser.add_argument('--save_interval', type=int, default=5, help='save checkpoint every N epochs')
+    parser.add_argument('--save_interval', type=int, default=2, help='save checkpoint every N epochs')
 
     args = parser.parse_args()
     print(args)
