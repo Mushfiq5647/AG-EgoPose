@@ -6,8 +6,8 @@ actionformer/config/
 actionformer/epoch_014.pth.tar
 actionformer/epoch_015.pth.tar
 actionformer/epoch_035.pth.tar
-utils/trained_egopwfull_egogta
-utils/trained_egopwfull_mo2cap2
+utils/trained_egopwtrain_bce
+utils/rigid_transform_with_scale.py
 utils/trained_heatmaps
 utils/mo2cap2
 utils/sceneego
@@ -17,5 +17,7 @@ generate_heatmaps_sceneego.py
 generate_heatmaps_mo2cap2.py
 visualize_3d_poses.py
 visualize_heatmap_sceneego.py
-
+visualize_heatmaps_with_network.py
+visualize_loaded_heatmaps.py
+visualize_mo2cap2_heatmap.py
 
