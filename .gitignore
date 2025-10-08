@@ -6,11 +6,8 @@ actionformer/config/
 actionformer/epoch_014.pth.tar
 actionformer/epoch_015.pth.tar
 actionformer/epoch_035.pth.tar
-utils/trained_egopwtrain_bce
-utils/rigid_transform_with_scale.py
-utils/trained_heatmaps
-utils/mo2cap2
-utils/sceneego
+utils/trained_egopwtrain_bce/
+utils/trained_heatmaps/
 testing.py
 generate_heatmaps_egopw.py
 generate_heatmaps_sceneego.py
