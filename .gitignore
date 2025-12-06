@@ -1,6 +1,7 @@
 __pycache__/
 .idea/
 *.pyc
+log/experiment/
 actionformer/
 actionformer/config/
 actionformer/epoch_014.pth.tar
@@ -8,6 +9,7 @@ actionformer/epoch_015.pth.tar
 actionformer/epoch_035.pth.tar
 utils/trained_egopwtrain_bce/
 utils/trained_heatmaps/
+utils/sceneego
 testing.py
 generate_heatmaps_egopw.py
 generate_heatmaps_sceneego.py

@@ -19,7 +19,7 @@ class ActionFormerFeatureExtractor(nn.Module):
         self.spatial_proj = nn.Conv2d(512, 384, kernel_size=1)
 
         # We'll have len(self.model.backbone.branch) scales to fuse
-        n_scales = len(self.model.backbone.branch) - 1
+        n_scales = len(self.model.backbone.branch)
         print('n_scales', n_scales)
         # Channel-projector now needs in_channels = 256 * n_scales
         self.channel_projector = nn.Conv1d(

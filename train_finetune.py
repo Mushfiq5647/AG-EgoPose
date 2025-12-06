@@ -108,7 +108,7 @@ def main(args):
         os.makedirs(args.model_path)
 
     # Create loss log file
-    loss_log_path = 'loss_log_finetune_cross.txt'
+    loss_log_path = 'loss_log_finetune.txt'
     with open(loss_log_path, 'w') as f:
         f.write("Epoch, Train_MPJPE, Train_Cos, Train_Bone, Train_Total \n")
 
@@ -207,7 +207,7 @@ def main(args):
             eta_min=1e-4
         )
     # Full precision training
-    model_dir = os.path.abspath('./utils/sceneego_cross')
+    model_dir = os.path.abspath('./utils/sceneego')
     total_step = len(data_loader)
     for epoch in range(args.num_epochs):
         print("Printing epoch:", epoch)
@@ -371,10 +371,10 @@ if __name__ == '__main__':
     parser.add_argument('--heatmap_trained_path', type=str, required=True, help='path for trained 2D heatmap')
     
     # Pre-trained model paths for fine-tuning
-    parser.add_argument('--encoder_path', type=str, default='utils/trained_egopwtrain_bce_cross/encoder-best.ckpt', help='path for pre-trained encoder')
-    parser.add_argument('--decoder_path', type=str, default= 'utils/trained_egopwtrain_bce_cross/pose-decoder-best.ckpt', help='path for pre-trained decoder')
-    parser.add_argument('--heatmap_path', type=str, default='utils/trained_egopwtrain_bce_cross/heatmap_embedding-best.ckpt',help = 'path for pre-trained heatmap embedding')
-    parser.add_argument('--spatial_transformer_path', type=str, default = './utils/trained_egopwtrain_bce_cross/spatial_transformer-best.ckpt', help='path for pre-trained spatial transformer')
+    parser.add_argument('--encoder_path', type=str, default='utils/trained_egopwtrain_bce/encoder-best.ckpt', help='path for pre-trained encoder')
+    parser.add_argument('--decoder_path', type=str, default= 'utils/trained_egopwtrain_bce/pose-decoder-best.ckpt', help='path for pre-trained decoder')
+    parser.add_argument('--heatmap_path', type=str, default='utils/trained_egopwtrain_bce/heatmap_embedding-best.ckpt',help = 'path for pre-trained heatmap embedding')
+    parser.add_argument('--spatial_transformer_path', type=str, default = './utils/trained_egopwtrain_bce/spatial_transformer-best.ckpt', help='path for pre-trained spatial transformer')
     parser.add_argument('--image_dir', type=str, default='/data/My_Backup/UnrealEgo/scripts/data/UnrealEgoData',
                         help='directory for resized images')
     parser.add_argument('--h_dir', type=str, default='D:/Dataset/EgoPW_dataset/EgoPW_dataset_release',

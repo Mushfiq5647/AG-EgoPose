@@ -23,19 +23,6 @@ TEST_DATASET = "EgoGlobal"
 
 
 def resolve_data_file_path(filename):
-    """
-    Helper function to resolve data file paths.
-    Tries to find the file in current directory, then parent directory.
-    
-    Args:
-        filename (str): The filename to look for
-        
-    Returns:
-        str: Full path to the file
-        
-    Raises:
-        FileNotFoundError: If file cannot be found in current or parent directory
-    """
     if os.path.exists(filename):
         return filename
     else:
@@ -79,6 +66,8 @@ def dataloader_full(opt, transform, mode='train', id=None):
         datasets = EgoPwWindowDataset(opt, transform, mode)
     elif opt.model == "sceneego":
         datasets = SceneEgoWindowDataset(opt, transform, mode)
+    elif opt.model == "unrealego":
+        datasets = UnrealEgoWindowDataset(opt, transform, mode)
     elif opt.model == "egoglobal":
         datasets = EgoGlobalTestDataset(opt, transform, mode)
     elif opt.model == "egogta":
@@ -177,7 +166,7 @@ class Mo2Cap2WindowDataset(torch.utils.data.Dataset):
 
 
 class EgoPwWindowDataset(torch.utils.data.Dataset):
-    def __init__(self, opt, transform, mode, window_size=64, stride=16):
+    def __init__(self, opt, transform, mode, window_size=64, stride=64):
         self.transform = transform
         self.window_size = window_size
         self.stride = stride
@@ -251,7 +240,7 @@ class EgoPwWindowDataset(torch.utils.data.Dataset):
                 suffix = name[len("img_"):]
             else:
                 suffix = name
-            
+
             info = gt_map[name]
             # Load and convert pose (guaranteed no NaN)
             pose_np = info['optimized_local_pose']
@@ -262,7 +251,7 @@ class EgoPwWindowDataset(torch.utils.data.Dataset):
             if self.transform:
                 img = self.transform(img)
             imgs.append(img)
-            
+
             # Load precomputed heatmap
             heatmap_filename = "heatmap_" + suffix.replace('.jpg', '.npy')
             hm_path = os.path.join(hm_dir, heatmap_filename)
@@ -282,7 +271,7 @@ class EgoPwWindowDataset(torch.utils.data.Dataset):
 
 
 class SceneEgoWindowDataset(torch.utils.data.Dataset):
-    def __init__(self, opt, transform, mode, window_size=64, stride=16):
+    def __init__(self, opt, transform, mode, window_size=128, stride=32):
         self.transform = transform
         self.window_size = window_size
         self.stride = stride
@@ -485,6 +474,95 @@ class EgoGTAWindowDataset(torch.utils.data.Dataset):
             'gt_local_pose': pose_batch
         }
 
+
+class UnrealEgoWindowDataset(torch.utils.data.Dataset):
+    def __init__(self, opt, transform, mode, window_size=64, stride=16):
+        self.transform = transform
+        self.window_size = window_size
+        self.stride = stride
+
+        # Read sequence directories
+        sequnce_directory = f'{mode}_unrealego.txt'
+        print(sequnce_directory)
+        file_path = resolve_data_file_path(sequnce_directory)
+        with open(file_path, 'r') as f:
+            seq_dirs = [l.strip() for l in f if l.strip()]
+
+        self.sequences = []   # list of (file_paths, heatmap_dir)
+        self.index = []
+
+        for seq_idx, base in enumerate(seq_dirs):
+            # list and sort image files
+            sequence_dir = os.path.join(base, 'all_data_with_img-256_hm-64_pose-16_npy')
+            npy_files = [f for f in os.listdir(sequence_dir) if f.lower().endswith(('.npy'))]
+            npy_files = natsorted(npy_files)
+            npy_paths = [os.path.join(sequence_dir, f) for f in npy_files]
+
+            self.sequences.append(npy_paths)
+            L = len(npy_paths)
+            for start in range(0, L - window_size + 1, stride):
+                self.index.append((seq_idx, start))
+
+    def __len__(self):
+        return len(self.index)
+
+    def __getitem__(self, idx):
+        # get paths for each data
+        seq_idx, start = self.index[idx]
+        npy_paths = self.sequences[seq_idx]
+
+        window_files = npy_paths[start:start + self.window_size]
+        # window_hms  = hm_paths[start:start + self.window_size]
+
+        imgs_left, imgs_right, hms_left, hms_right, poses = [], [], [], [], []
+        for frame_data_path in window_files:
+            # load each data
+            frame_data = np.load(frame_data_path, allow_pickle=True)
+            frame_data = frame_data.item()
+
+            input_rgb_left = frame_data["input_rgb_left"]
+            input_rgb_right = frame_data["input_rgb_right"]
+
+            if self.transform:
+                # Debug: Check dimensions
+                # print(f"DEBUG - input_rgb_left shape: {input_rgb_left.shape}, dtype: {input_rgb_left.dtype}")
+                # print(f"DEBUG - input_rgb_right shape: {input_rgb_right.shape}, dtype: {input_rgb_right.dtype}")
+                
+                # Convert from (C, H, W) to (H, W, C) and float32 to uint8
+                input_rgb_left = np.transpose(input_rgb_left, (1, 2, 0))  # (C,H,W) -> (H,W,C)
+                input_rgb_right = np.transpose(input_rgb_right, (1, 2, 0))  # (C,H,W) -> (H,W,C)
+                
+                # print(f"DEBUG - After transpose - left shape: {input_rgb_left.shape}, right shape: {input_rgb_right.shape}")
+                
+                # Convert to PIL Image
+                input_rgb_left = Image.fromarray((input_rgb_left * 255).astype(np.uint8))
+                input_rgb_right = Image.fromarray((input_rgb_right * 255).astype(np.uint8))
+
+                input_rgb_left = self.transform(input_rgb_left)
+                input_rgb_right = self.transform(input_rgb_right)
+            gt_heatmap_left = torch.from_numpy(frame_data["gt_heatmap_left"]).float()
+            gt_heatmap_right = torch.from_numpy(frame_data["gt_heatmap_right"]).float()
+            gt_local_pose = torch.from_numpy(frame_data["gt_local_pose"]).float()
+            imgs_left.append(input_rgb_left)
+            imgs_right.append(input_rgb_right)
+            hms_left.append(gt_heatmap_left)
+            hms_right.append(gt_heatmap_right)
+            poses.append(gt_local_pose)
+
+
+        img_left_batch = torch.stack(imgs_left, dim=0)  # (T,3,H,W)
+        img_right_batch = torch.stack(imgs_right, dim=0)  # (T,3,H,W)
+        hm_left_batch   = torch.stack(hms_left,  dim=0)      # (T,J,H,W)
+        hm_right_batch   = torch.stack(hms_right,  dim=0)      # (T,J,H,W)
+        pose_batch = torch.stack(poses, dim=0)  # (T,J,3)
+
+        return {
+            'input_rgb_left': img_left_batch,
+            'input_rgb_right': img_right_batch,
+            'gt_heatmap_left':   hm_left_batch,
+            'gt_heatmap_right':   hm_right_batch,
+            'gt_local_pose': pose_batch
+        }
 
 class EgoGlobalTestDataset(torch.utils.data.Dataset):
     def __init__(self, opt, transform, mode, window_size=64, stride=32):

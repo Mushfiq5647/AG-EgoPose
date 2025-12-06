@@ -24,29 +24,18 @@ class UniversalSkeletonRescaler:
         """
         # Your 15-joint skeleton definition
         if joint_names is None:
-            self.joint_names = [
-                "Neck",           # 0  - Root joint
-                "Right_shoulder", # 1
-                "Right_elbow",    # 2  
-                "Right_wrist",    # 3
-                "Left_shoulder",  # 4
-                "Left_elbow",     # 5
-                "Left_wrist",     # 6
-                "Right_hip",      # 7
-                "Right_knee",     # 8
-                "Right_ankle",    # 9
-                "Right_foot",     # 10
-                "Left_hip",       # 11
-                "Left_knee",      # 12
-                "Left_ankle",     # 13
-                "Left_foot"       # 14
-            ]
+            self.joint_names = ["head", "neck_01", "upperarm_l", "upperarm_r", "lowerarm_l", "lowerarm_r",
+                               "hand_l", "hand_r", "thigh_l", "thigh_r", "calf_l", "calf_r",
+                               "foot_l", "foot_r", "ball_l", "ball_r"]
+            # Kinematic parents: head is root (parent=-1 but we use 0 for indexing),
+            # neck's parent is head (0), arms connect to neck (1), legs connect to arms (2,3)
+
         else:
             self.joint_names = joint_names
             
         if kinematic_parents is None:
             # Your kinematic chain with root at Neck (index 0)
-            self.kinematic_parents = [-1, 0, 1, 2, 0, 4, 5, 1, 7, 8, 9, 4, 11, 12, 13]
+            self.kinematic_parents = [0, 0, 1, 1, 2, 3, 4, 5, 2, 3, 8, 9, 10, 11, 12, 13]
         else:
             self.kinematic_parents = kinematic_parents
             

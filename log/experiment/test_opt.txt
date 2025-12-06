@@ -20,7 +20,7 @@ isTrain: False
 load_size_heatmap: [64, 64]
 load_size_rgb: [256, 256]
 log_dir: log
-model: egopw
+model: sceneego
 model_name: resnet18
 ntest: inf
 num_heatmap: 15

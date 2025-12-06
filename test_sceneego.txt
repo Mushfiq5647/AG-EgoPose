@@ -1,3 +1,6 @@
 /data/My_Backup/Dataset/SceneEgo_test/diogo1
+/data/My_Backup/Dataset/SceneEgo_test/diogo2
+/data/My_Backup/Dataset/SceneEgo_test/jian1
+/data/My_Backup/Dataset/SceneEgo_test/jian2
 
 

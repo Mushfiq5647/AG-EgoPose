@@ -183,12 +183,12 @@ class PoseDecoder(nn.Module):
 
         self.pose_head = nn.Sequential(
             nn.Linear(joint_dim, hidden),
-            nn.LeakyReLU(negative_slope=0.1),  # Better for negative values
+            nn.LeakyReLU(negative_slope=0.1),
             nn.Dropout(0.1),
-            nn.Linear(hidden, hidden//2),
-            nn.LeakyReLU(negative_slope=0.1),  # Better for negative values
+            nn.Linear(hidden, hidden // 2),
+            nn.LeakyReLU(negative_slope=0.1),
             nn.Dropout(0.1),
-            nn.Linear(hidden//2, 3)
+            nn.Linear(hidden // 2, 3)  # Each joint → (x, y, z)
         )
 
     def forward(self, spatial_joint_features, motion_features):

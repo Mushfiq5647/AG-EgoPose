@@ -199,27 +199,27 @@ def main(args):
             pa_mpjpe = mpjpe_loss_func(S1_hat, gt_reshaped)
             
             # Calculate BA-MPJPE using new Umeyama approach
-            final_np = final_reshaped.detach().cpu().numpy()
-            gt_np = gt_reshaped.detach().cpu().numpy()
-            ba_mpjpe = calculate_ba_mpjpe(final_np, gt_np, skeleton_model=None)
+            # final_np = final_reshaped.detach().cpu().numpy()
+            # gt_np = gt_reshaped.detach().cpu().numpy()
+            # ba_mpjpe = calculate_ba_mpjpe(final_np, gt_np, skeleton_model=None)
             
-            print(f'Batch [{i + 1}/{len(test_loader)}], MPJPE: {mpjpe_loss:.4f}, PA-MPJPE: {pa_mpjpe:.4f}, BA-MPJPE: {ba_mpjpe:.4f}')
+            print(f'Batch [{i + 1}/{len(test_loader)}], MPJPE: {mpjpe_loss:.4f}, PA-MPJPE: {pa_mpjpe:.4f}')
             
             # Accumulate errors
             total_mpjpe += mpjpe_loss.item() * B * T
             total_procrustes_error += pa_mpjpe.item() * B * T
-            total_ba_mpjpe_error += ba_mpjpe * B * T
+            # total_ba_mpjpe_error += ba_mpjpe * B * T
             total_samples += B * T
 
         # Calculate final averages
         avg_mpjpe = total_mpjpe / total_samples
         avg_pa_mpjpe = total_procrustes_error / total_samples
-        avg_ba_mpjpe = total_ba_mpjpe_error / total_samples
+        # avg_ba_mpjpe = total_ba_mpjpe_error / total_samples
         
         print(f'\n=== Final Evaluation Results ===')
         print(f'Average MPJPE: {avg_mpjpe:.4f}')
         print(f'Average PA-MPJPE: {avg_pa_mpjpe:.4f}')
-        print(f'Average BA-MPJPE: {avg_ba_mpjpe:.4f}')
+        # print(f'Average BA-MPJPE: {avg_ba_mpjpe:.4f}')
         print(f'Total samples evaluated: {total_samples}')
         
         # Save results to file
@@ -229,7 +229,7 @@ def main(args):
             f.write(f"===================\n")
             f.write(f"Average MPJPE: {avg_mpjpe:.4f}\n")
             f.write(f"Average PA-MPJPE: {avg_pa_mpjpe:.4f}\n")
-            f.write(f"Average BA-MPJPE: {avg_ba_mpjpe:.4f}\n")
+            # f.write(f"Average BA-MPJPE: {avg_ba_mpjpe:.4f}\n")
             f.write(f"Total samples evaluated: {total_samples}\n")
         
         print(f"Results saved to {results_file}")
