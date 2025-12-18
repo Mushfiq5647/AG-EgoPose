@@ -2,13 +2,10 @@
 import argparse
 import os
 import sys
-import numpy as np
 import torch
-import torch.nn.functional as F
 from torchvision import transforms
-from torch.cuda.amp import autocast
 
-from action_recognition import initialize_actionformer
+from utils.action_recognition import initialize_actionformer
 from options.test_options import TestOptions
 from utils.data_loader import dataloader_full
 from utils.cross_attention_model import HeatmapToJointFeatures
@@ -18,7 +15,6 @@ from utils.loss import LossFuncMPJPE
 from heatmaps.network_heatmap import HeatMap_Network
 from utils.model import FeatureEncoder
 from utils.util import batch_compute_similarity_transform_torch
-from utils.pose_evaluation import calculate_ba_mpjpe
 import socket
 
 print("Running on host:", socket.gethostname())

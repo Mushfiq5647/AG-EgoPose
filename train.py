@@ -4,11 +4,10 @@ import os
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torchvision import transforms
 from torch.amp import autocast, GradScaler
 
-from action_recognition import initialize_actionformer
+from utils.action_recognition import initialize_actionformer
 from options.train_options import TrainOptions
 from utils.data_loader import dataloader_full
 from utils.cross_attention_model import HeatmapToJointFeatures
@@ -222,7 +221,8 @@ def main(args):
     
     # Mixed precision training for memory efficiency
     scaler = GradScaler(device='cuda')
-    model_dir = os.path.abspath('./utils/trained_egopwtrain_bce')
+    # Save checkpoints under --model_path (so experiments are reproducible without editing code)
+    model_dir = os.path.abspath(args.model_path)
     total_step = len(data_loader)
     for epoch in range(args.num_epochs):
         print("Printing epoch:", epoch)
@@ -334,8 +334,6 @@ def main(args):
                        os.path.join(model_dir, 'encoder-best.ckpt'))
             torch.save(heatmap_embedding.state_dict(),
                        os.path.join(model_dir, 'heatmap_embedding-best.ckpt'))
-            torch.save(spatial_joint_transformer.state_dict(),
-                       os.path.join(model_dir, 'spatial_transformer-best.ckpt'))
         
         # Save periodic checkpoints
         if (epoch + 1) % args.save_interval == 0:
@@ -345,8 +343,6 @@ def main(args):
                        os.path.join(model_dir, f'encoder-{epoch + 1:03d}.ckpt'))
             torch.save(heatmap_embedding.state_dict(),
                        os.path.join(model_dir, f'heatmap_embedding-{epoch + 1:03d}.ckpt'))
-            torch.save(spatial_joint_transformer.state_dict(),
-                       os.path.join(model_dir, f'spatial_transformer-{epoch + 1:03d}.ckpt'))
 
         # Print epoch summary
         print(f"=== Epoch {epoch} Summary ===")

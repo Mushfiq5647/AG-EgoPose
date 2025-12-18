@@ -1,5 +1,0 @@
-/data/My_Backup/Dataset/TestDataset_EgocentricGlobalPose/jian1
-/data/My_Backup/Dataset/TestDataset_EgocentricGlobalPose/jian2
-/data/My_Backup/Dataset/TestDataset_EgocentricGlobalPose/jian3
-/data/My_Backup/Dataset/TestDataset_EgocentricGlobalPose/lingjie1
-/data/My_Backup/Dataset/TestDataset_EgocentricGlobalPose/lingjie2

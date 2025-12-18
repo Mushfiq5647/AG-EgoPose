@@ -3,12 +3,9 @@ import argparse
 import os
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from torchvision import transforms
-from torch.amp import autocast, GradScaler
 
-from action_recognition import initialize_actionformer
+from utils.action_recognition import initialize_actionformer
 from options.train_options import TrainOptions
 from utils.data_loader import dataloader_full
 from utils.cross_attention_model import HeatmapToJointFeatures
@@ -108,7 +105,7 @@ def main(args):
         os.makedirs(args.model_path)
 
     # Create loss log file
-    loss_log_path = 'loss_log_finetune.txt'
+    loss_log_path = 'loss_log_finetune_seq64.txt'
     with open(loss_log_path, 'w') as f:
         f.write("Epoch, Train_MPJPE, Train_Cos, Train_Bone, Train_Total \n")
 
@@ -207,7 +204,8 @@ def main(args):
             eta_min=1e-4
         )
     # Full precision training
-    model_dir = os.path.abspath('./utils/sceneego')
+    # Save checkpoints under --model_path (so experiments are reproducible without editing code)
+    model_dir = os.path.abspath(args.model_path)
     total_step = len(data_loader)
     for epoch in range(args.num_epochs):
         print("Printing epoch:", epoch)
@@ -320,8 +318,6 @@ def main(args):
                        os.path.join(model_dir, 'encoder-best.ckpt'))
             torch.save(heatmap_embedding.state_dict(),
                        os.path.join(model_dir, 'heatmap_embedding-best.ckpt'))
-            torch.save(spatial_joint_transformer.state_dict(),
-                       os.path.join(model_dir, 'spatial_transformer-best.ckpt'))
 
         # Save periodic checkpoints
         if (epoch + 1) % args.save_interval == 0:
@@ -332,8 +328,6 @@ def main(args):
                        os.path.join(model_dir, f'encoder-{epoch + 1:03d}.ckpt'))
             torch.save(heatmap_embedding.state_dict(),
                        os.path.join(model_dir, f'heatmap_embedding-{epoch + 1:03d}.ckpt'))
-            torch.save(spatial_joint_transformer.state_dict(),
-                       os.path.join(model_dir, f'spatial_transformer-{epoch + 1:03d}.ckpt'))
 
         # Print epoch summary
         print(f"=== Epoch {epoch} Summary ===")
@@ -371,10 +365,10 @@ if __name__ == '__main__':
     parser.add_argument('--heatmap_trained_path', type=str, required=True, help='path for trained 2D heatmap')
     
     # Pre-trained model paths for fine-tuning
-    parser.add_argument('--encoder_path', type=str, default='utils/trained_egopwtrain_bce/encoder-best.ckpt', help='path for pre-trained encoder')
-    parser.add_argument('--decoder_path', type=str, default= 'utils/trained_egopwtrain_bce/pose-decoder-best.ckpt', help='path for pre-trained decoder')
-    parser.add_argument('--heatmap_path', type=str, default='utils/trained_egopwtrain_bce/heatmap_embedding-best.ckpt',help = 'path for pre-trained heatmap embedding')
-    parser.add_argument('--spatial_transformer_path', type=str, default = './utils/trained_egopwtrain_bce/spatial_transformer-best.ckpt', help='path for pre-trained spatial transformer')
+    parser.add_argument('--encoder_path', type=str, default='utils/trained_egopwtrain_bce_seq64/encoder-best.ckpt', help='path for pre-trained encoder')
+    parser.add_argument('--decoder_path', type=str, default= 'utils/trained_egopwtrain_bce_seq64/pose-decoder-best.ckpt', help='path for pre-trained decoder')
+    parser.add_argument('--heatmap_path', type=str, default='utils/trained_egopwtrain_bce_seq64/heatmap_embedding-best.ckpt',help = 'path for pre-trained heatmap embedding')
+    parser.add_argument('--spatial_transformer_path', type=str, default = './utils/trained_egopwtrain_bce_seq64/spatial_transformer-best.ckpt', help='path for pre-trained spatial transformer')
     parser.add_argument('--image_dir', type=str, default='/data/My_Backup/UnrealEgo/scripts/data/UnrealEgoData',
                         help='directory for resized images')
     parser.add_argument('--h_dir', type=str, default='D:/Dataset/EgoPW_dataset/EgoPW_dataset_release',

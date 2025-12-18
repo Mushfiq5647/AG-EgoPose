@@ -275,7 +275,7 @@ def test_heatmap_model(model_path, image_path, device='cuda'):
 
 def main():
     parser = argparse.ArgumentParser(description='Test heatmap model visualization')
-    parser.add_argument('--model_path', type=str, default='/data/My_Backup/you2me-main/utils/trained_heatmaps/heatmap-020.ckpt',
+    parser.add_argument('--model_path', type=str, default='/data/My_Backup/ag-egopose/utils/trained_heatmaps/heatmap-020.ckpt',
                        help='Path to trained heatmap model')
     parser.add_argument('--image_path', type=str, default='/data/My_Backup/Dataset/EgoGTA/EgoGTAImages/2020-05-21-13-54-43/img/000190.png',
                        help='Path to test image')

@@ -30,7 +30,7 @@ log_dir: log
 lr: 0.001
 lr_decay_iters_step: 4
 lr_policy: lambda
-model: sceneego
+model: egopw
 model_name: resnet18
 model_path: ./utils/model.py
 niter: 0

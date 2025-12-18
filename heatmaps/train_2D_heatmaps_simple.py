@@ -20,7 +20,7 @@ from heatmaps.network_heatmap import HeatMap_Network
 torch.manual_seed(7)
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print("Using device:", device)
+
 
 def main(args):
     # Create output directory
@@ -43,7 +43,6 @@ def main(args):
     # Data loading
     opt = TrainOptions().parse()
     train_loader = dataloader_full(opt, transform, mode='train')
-    print(f"Training samples: {len(train_loader.dataset)}")
     
     # Model
     model = HeatMap_Network(opt, model_name='resnet18').to(device)

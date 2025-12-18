@@ -26,7 +26,7 @@ class FeatureEncoder(nn.Module):
         # Set ActionFormer to eval mode if it's frozen
         if not any(p.requires_grad for p in actionformer_model.parameters()):
             self.actionformer_model.eval()
-            print("Actionformer model set to eval")
+            # print("Actionformer model set to eval")
 
     def forward(self, images):
         feat_block = []

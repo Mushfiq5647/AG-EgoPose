@@ -2,3 +2,6 @@ scipy
 torch
 numpy
 torchvision
+opencv-python
+tqdm
+natsort

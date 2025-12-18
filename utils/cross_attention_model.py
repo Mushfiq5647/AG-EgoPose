@@ -199,10 +199,10 @@ class PoseDecoder(nn.Module):
         motion_features = self.motion_proj(motion_features)
         motion_tiled = motion_features.unsqueeze(2).expand(-1, -1, J, -1)  # (B,T,J,384)
         motion_tiled = motion_tiled.view(B * T, J, -1)
-        print("Motion tiled:", motion_tiled.shape)
-        print("Spatial tiled:", spatial_joint_features.shape)
+        # print("Motion tiled:", motion_tiled.shape)
+        # print("Spatial tiled:", spatial_joint_features.shape)
         memory = torch.cat([spatial_joint_features,motion_tiled], dim=-1)
-        print("Memory shape", memory.shape)
+        # print("Memory shape", memory.shape)
         # Project memory back to joint_dim for transformer decoder
         memory = self.memory_proj(memory)  # (B*T, J, joint_dim)
         # # motion_memory = self.memory_proj(motion_tiled)  # (B*T, J, joint_dim)

@@ -166,7 +166,7 @@ class Mo2Cap2WindowDataset(torch.utils.data.Dataset):
 
 
 class EgoPwWindowDataset(torch.utils.data.Dataset):
-    def __init__(self, opt, transform, mode, window_size=64, stride=64):
+    def __init__(self, opt, transform, mode, window_size=32, stride=8):
         self.transform = transform
         self.window_size = window_size
         self.stride = stride
@@ -271,7 +271,7 @@ class EgoPwWindowDataset(torch.utils.data.Dataset):
 
 
 class SceneEgoWindowDataset(torch.utils.data.Dataset):
-    def __init__(self, opt, transform, mode, window_size=128, stride=32):
+    def __init__(self, opt, transform, mode, window_size=64, stride=64):
         self.transform = transform
         self.window_size = window_size
         self.stride = stride
