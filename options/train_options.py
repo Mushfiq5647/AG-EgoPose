@@ -56,7 +56,7 @@ class TrainOptions(BaseOptions):
         self.parser.add_argument('--save_epoch_freq', type=int, default=1,
                                  help='frequency of saving checkpoints at the end of epochs')
         self.parser.add_argument('--model_path', type=str, required=True, help='path for saving trained models')
-        self.parser.add_argument('--annotation_path', type=str, required=True, help='path for annotation wrapper')
+        # self.parser.add_argument('--annotation_path', type=str, required=True, help='path for annotation wrapper')
         self.parser.add_argument('--heatmap_trained_path', type=str, required=True, help='path for annotation wrapper')
 
         # ------------------------------ others ------------------------------ #
