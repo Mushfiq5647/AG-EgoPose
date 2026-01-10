@@ -24,16 +24,16 @@ The motion encoder loads an Ego4D-pretrained ActionFormer checkpoint. Download i
 
 - `actionformer/ego4d_egovlp_reproduce/epoch_010.pth.tar`
 
-[Download ActionFormer checkpoint](https://drive.google.com/drive/folders/1NpAECS0ZhcCuehXkF9OhLQDPFrNdStJb) *(link to be provided)*
+[Download ActionFormer checkpoint](https://drive.google.com/drive/folders/1NpAECS0ZhcCuehXkF9OhLQDPFrNdStJb) 
 
 ### Pre-trained Models
 
 If you don't want to train from scratch, you can download the following pre-trained models:
 
-- **2D Heatmap Network**: [Download](https://drive.google.com/drive/u/0/folders/1nmdQzYoh_oe4MZxyx-rBDbcx69osVUTf) *(link to be provided)*
+- **2D Heatmap Network**: [Download](https://drive.google.com/drive/u/0/folders/1nmdQzYoh_oe4MZxyx-rBDbcx69osVUTf)
   - Place at: `utils/trained_heatmaps/bce_combined/heatmap_best.ckpt`
 
-- **AG-EgoPose Model**: [Download](https://drive.google.com/drive/u/0/folders/1p6uUM3bW4yC-dzV92mFS3g03zXoTv13r) *(link to be provided)*
+- **AG-EgoPose Model**: [Download](https://drive.google.com/drive/u/0/folders/1p6uUM3bW4yC-dzV92mFS3g03zXoTv13r) 
   - Place the checkpoint files in `utils/trained_model/` directory with the following structure:
     - `utils/trained_model/encoder-best.ckpt`
     - `utils/trained_model/pose-decoder-best.ckpt`
@@ -45,8 +45,8 @@ If you don't want to train from scratch, you can download the following pre-trai
 
 Download the EgoPW and SceneEgo datasets from the following links:
 
-- **EgoPW Dataset**: [Download](https://edmond.mpg.de/dataset.xhtml?persistentId=doi:10.17617/3.FQAEOV) *(link to be provided)*
-- **SceneEgo Dataset**: [Download](https://edmond.mpg.de/dataset.xhtml?persistentId=doi:10.17617/3.VCIHDO) *(link to be provided)*
+- **EgoPW Dataset**: [Download](https://edmond.mpg.de/dataset.xhtml?persistentId=doi:10.17617/3.FQAEOV) 
+- **SceneEgo Dataset**: [Download](https://edmond.mpg.de/dataset.xhtml?persistentId=doi:10.17617/3.VCIHDO) 
 
 ### Data setup
 
@@ -66,7 +66,6 @@ Each directory listed in `train_egopw.txt` / `test_egopw.txt` should contain:
 
 - `imgs/` (RGB frames named `img_XXXXXX.jpg`)
 - `pseudo_gt.pkl` (or `pseudo.pkl`) for GT pose lookup
-- `heatmap/` (or `heatmap/`) containing `heatmap_XXXXXX.npy` files - **you need to generate these using the heatmap generation script below**
 
 ### SceneEgo
 Each directory listed in `train_sceneego.txt` / `test_sceneego.txt` should contain:
@@ -74,7 +73,6 @@ Each directory listed in `train_sceneego.txt` / `test_sceneego.txt` should conta
 - `imgs/` (RGB frames)
 - `local_pose_gt.pkl`
 - `syn.json`
-- `heatmap/` (or `heatmap/`) containing `heatmap_XXXXXX.npy` files - **you need to generate these using the heatmap generation script below**
 
 **Note**: The heatmaps are not included in the downloaded datasets. You must generate them using the scripts in the "Generate heatmaps" section below, which will create the `heatmap/` folder automatically.
 
@@ -118,7 +116,7 @@ If you downloaded the pre-trained 2D heatmap model (see "Pretrained Models" sect
 To train from scratch:
 
 ```bash
-python heatmaps/train_2D_heatmaps_simple.py
+python heatmaps/train_2D_heatmaps.py
 ```
 
 By default, this writes:
