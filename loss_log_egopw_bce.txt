@@ -1,2 +1,0 @@
-Epoch, Train_MPJPE, Train_Cos, Train_Bone, Train_Total, Best_Total 
-0,0.1172,11.9559,0.1577,0.4822,0.4822

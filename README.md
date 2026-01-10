@@ -91,7 +91,7 @@ python heatmaps/generate_heatmaps/generate_heatmaps_egopw.py \
   --sigma 2.0
 ```
 
-The script will process each sequence directory listed in `train_egopw.txt` and create `heatmap64_2.0/heatmap_XXXXXX.npy` files inside each sequence folder.
+The script will process each sequence directory listed in `train_egopw.txt` and create `heatmap/heatmap_XXXXXX.npy` files inside each sequence folder.
 
 ### SceneEgo
 

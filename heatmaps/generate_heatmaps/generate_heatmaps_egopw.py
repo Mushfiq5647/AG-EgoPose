@@ -95,7 +95,7 @@ def to_heatmap_filename(image_name):
     return f"heatmap_{suffix}.npy"
 
 def _default_out_dirname(hm_size: int, sigma: float) -> str:
-    # Keep the historical formatting used across the repo (e.g., "heatmap64_2.0")
+    # Keep the historical formatting used across the repo (e.g., "heatmap")
     return f"heatmap{hm_size}_{sigma:.1f}"
 
 # -------------------------------------------------------------
@@ -118,7 +118,7 @@ def process_sequence(seq_dir, expect_joints, hm_size, sigma, overwrite=False, im
         print(f"[WARN] Unexpected PKL format in {pkl_path}. Expected a list of dicts. Skipping.")
         return 0, 0
 
-    # Output directory (default matches dataloader expectation: heatmap64_2.0)
+    # Output directory (default matches dataloader expectation: heatmap64)
     if out_dirname is None:
         out_dirname = _default_out_dirname(hm_size, sigma)
     out_dir = os.path.join(seq_dir, out_dirname)

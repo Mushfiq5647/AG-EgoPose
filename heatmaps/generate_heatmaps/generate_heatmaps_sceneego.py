@@ -166,7 +166,7 @@ def process_sequence(seq_dir, fisheye_data, expect_joints=15, hm_size=64, sigma=
         }
     
     # Output directory
-    out_dir = os.path.join(seq_dir, "heatmap64_2.0")
+    out_dir = os.path.join(seq_dir, "heatmap64")
     os.makedirs(out_dir, exist_ok=True)
     
     # Image directory
