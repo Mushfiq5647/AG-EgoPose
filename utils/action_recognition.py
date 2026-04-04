@@ -3,77 +3,79 @@ import torch.nn as nn
 from actionformer.modeling import make_meta_arch
 from actionformer.config import load_config
 import torch.nn.functional as F
-import torchvision.models as models
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+
 class ActionFormerFeatureExtractor(nn.Module):
-    def __init__(self, action_model):
+    def __init__(self, action_model, dinov2_dim=384, actionformer_input_dim=256):
         super().__init__()
         self.model = action_model
 
-        # Spatial backbone (ResNet18 w/o avgpool+fc)
-        resnet = models.resnet18(pretrained=True)
-        modules = list(resnet.children())[:-2]
-        self.spatial_backbone = nn.Sequential(*modules)
-        self.spatial_proj = nn.Conv2d(512, 384, kernel_size=1)
+        # Bridge DINOv2 (384-dim) to ActionFormer's expected input (256-dim)
+        # The pretrained backbone embedding convs expect 256-dim input (EgoVLP features).
+        # This learnable projection adapts DINOv2 features to the pretrained input space.
+        self.input_proj = nn.Conv1d(dinov2_dim, actionformer_input_dim, kernel_size=1)
 
-        # We'll have len(self.model.backbone.branch) scales to fuse
-        n_scales = len(self.model.backbone.branch)-2
-        # Channel-projector now needs in_channels = 256 * n_scales
+        # Number of multi-scale outputs from the backbone:
+        # backbone.forward() returns (stem_output, branch_0, ..., branch_N)
+        # That's 1 + len(branch) total feature maps
+        n_scales = 1 + len(self.model.backbone.branch)
+        embd_dim = self.model.backbone.branch[0].ln1.num_channels  # 384
+
+        # Channel projector fuses all multi-scale features back to embd_dim
         self.channel_projector = nn.Conv1d(
-            in_channels=384 * n_scales,
-            out_channels=384,
+            in_channels=embd_dim * n_scales,
+            out_channels=embd_dim,
             kernel_size=1
         )
 
     def forward(self, x, mask=None):
         """
-        x: (B, T, C)  — your precomputed per‑frame features, here C=384
-        mask: (optional) boolean mask of shape (B, C, T)
-        returns: (B, T, C) fused features
+        x: (B, T, C) — DINOv2 per-frame features, C=384
+        mask: (optional) boolean mask of shape (B, 1, T)
+        returns: (B, T, embd_dim) fused temporal features
         """
         B, T, C = x.shape
-        # 1) prepare for temporal blocks: (B, C, T)
+
+        # (B, T, C) -> (B, C, T) for 1D conv / ActionFormer backbone
         x = x.permute(0, 2, 1)
+
+        # Project DINOv2 384-dim -> ActionFormer's expected 256-dim input
+        x = self.input_proj(x)  # (B, 256, T)
+
         if mask is None:
-            # mask must have the same channel dim as x
-            mask = torch.ones((B, C, T), dtype=torch.bool, device=x.device)
+            mask = torch.ones((B, 1, T), dtype=torch.bool, device=x.device)
 
-        # 2) apply each block if its sliding window fits
-        branch_scales = []
-        for blk in self.model.backbone.branch:
-            win = getattr(blk.attn, 'window_overlap', 1)
-            seq_len = x.size(-1)
+        # Run the FULL backbone: embedding convs -> stem transformers -> branch transformers
+        # Returns tuple of multi-scale features + masks
+        out_feats, out_masks = self.model.backbone(x, mask)
+        # out_feats: (stem_out, branch_0_out, ..., branch_6_out) — all (B, embd_dim, T_i)
 
-            # skip blocks whose window logic can’t handle this seq_len
-            if seq_len < 2 * win or (seq_len % (2 * win) != 0):
-                continue
-
-            x, mask = blk(x, mask)
-            branch_scales.append(x)
-
-        # 3) upsample each scale back to length T
+        # Upsample all scales back to original temporal length T and fuse
         upsampled = [
-            F.interpolate(s, size=T, mode='nearest')  # each s: (B, C, smaller_T)
-            for s in branch_scales
+            F.interpolate(feat, size=T, mode='nearest')
+            for feat in out_feats
         ]
 
-        # 4) concatenate along channels → (B, C * n_scales, T)
+        # Concatenate along channels -> (B, embd_dim * n_scales, T)
         cat = torch.cat(upsampled, dim=1)
 
+        # Fuse back to embd_dim via 1x1 Conv1d
+        fused = self.channel_projector(cat)  # (B, embd_dim, T)
 
-        # 5) fuse back down to C channels via your 1×1 Conv1d
-        fused = self.channel_projector(cat)  # (B, C, T)
-
-        # 6) return time‑first → (B, T, C)
+        # Return time-major: (B, T, embd_dim)
         return fused.permute(0, 2, 1)
 
 
 def initialize_actionformer(config_file_path):
     config = load_config(config_file_path)
     actionformer_model = make_meta_arch(config['model_name'], **config['model'])
-    checkpoint = torch.load('../actionformer/ego4d_egovlp_reproduce/epoch_010.pth.tar', map_location=torch.device('cuda'))
+
+    checkpoint = torch.load(
+        'actionformer/ego4d_egovlp_reproduce/epoch_010.pth.tar',
+        map_location=torch.device('cuda')
+    )
     state_dict = checkpoint['state_dict']
     new_state_dict = {key.replace('module.', ''): value for key, value in state_dict.items()}
     actionformer_model.load_state_dict(new_state_dict)
@@ -82,9 +84,11 @@ def initialize_actionformer(config_file_path):
 
     # Wrap the model with the feature extractor
     actionformer_feature_extractor = ActionFormerFeatureExtractor(actionformer_model)
-    # print(actionformer_feature_extractor)
+    actionformer_feature_extractor = actionformer_feature_extractor.to(device)
+
+    # Freeze all pretrained ActionFormer parameters initially
+    # (selective unfreezing happens in train.py)
     for param in actionformer_model.parameters():
         param.requires_grad = False
-    actionformer_feature_extractor.eval()
 
     return actionformer_feature_extractor

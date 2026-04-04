@@ -23,12 +23,12 @@ class BaseOptions():
                                 help='which epoch to load')
         self.parser.add_argument('--gpu_ids', type=str, default='0',
                                 help='gpu ids: e.g. 0, 1, 2 use -1 for CPU')   
-        self.parser.add_argument('--model', type=str, default='egopw',
+        self.parser.add_argument('--model', type=str, default='sceneego',
                                 help='choose which model to use, [egoglass] | [unrealego_heatmap_shared] | [unrealego_autoencoder]')
         self.parser.add_argument('--init_ImageNet', action='store_true', 
                                 help='If true, use ImageNet initialization for the backbone')
-        self.parser.add_argument('--model_name', type=str, default='resnet18', 
-                                help='name of the backbone')
+        self.parser.add_argument('--model_name', type=str, default='convnext_tiny', 
+                                help='legacy backbone name option; heatmap training/inference uses --heatmap_backbone')
         self.parser.add_argument('--use_slurm', action='store_true', 
                                 help='If true, use slurm cluster')
         self.parser.add_argument('--use_amp', action='store_true',
@@ -43,10 +43,14 @@ class BaseOptions():
                                 help='number of sequential images to be processd at one iteration')
         self.parser.add_argument('--num_heatmap', type=int, default=15,
                                 help='# of heatmaps')
-        self.parser.add_argument('--num_threads', default=8, type=int, 
+        self.parser.add_argument('--num_threads', default=8, type=int,
                                 help='# threads for loading data')
         self.parser.add_argument('--batch_size', type=int, default=8,
                                 help='input batch size')
+        self.parser.add_argument('--seq_length', type=int, default=64,
+                                help='sliding window size (number of frames per sequence)')
+        self.parser.add_argument('--stride', type=int, default=32,
+                                help='sliding window stride for dataset construction')
         self.parser.add_argument('--load_size_rgb', nargs='+', type=int, default=[256, 256], 
                                 help='scale images to this size')
         self.parser.add_argument('--load_size_heatmap', nargs='+', type=int, default=[64, 64], 
@@ -78,7 +82,9 @@ class BaseOptions():
         if not self.initialized:
             self.initialize()
 
-        self.opt=self.parser.parse_args()
+        # parse_known_args ignores args defined in train.py's own argparser
+        # (e.g. --config_path, --model_path) to avoid "unrecognized arguments" crash
+        self.opt, _ = self.parser.parse_known_args()
         self.opt.isTrain = self.isTrain
 
         str_ids = self.opt.gpu_ids.split(',')

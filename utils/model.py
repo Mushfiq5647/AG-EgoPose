@@ -1,49 +1,53 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from collections import OrderedDict
-import torchvision.models as models
 
 class FeatureEncoder(nn.Module):
+    PATCH_SIZE = 14  # DINOv2-ViT patch size
+
     def __init__(self, actionformer_model, embed_size=384):
         super(FeatureEncoder, self).__init__()
-        # Use ResNet-50 instead of ResNet-152 (better for egocentric vision)
-        resnet = models.resnet50(pretrained=True)
-        modules = list(resnet.children())[:-1]
-        self.resnet = nn.Sequential(*modules)
-        for i, layer in enumerate(self.resnet):
-            if i < 7:  # Freeze indices 0-6: conv1, bn1, relu, maxpool, layer1, layer2, layer3
-                layer.eval()
-                for p in layer.parameters():
-                    p.requires_grad = False
-            else:
-                layer.train()
-            # Index 7 (layer4) and Index 8 (avgpool) stay trainable
-        
-        self.linear = nn.Linear(resnet.fc.in_features, embed_size)
+        # DINOv2-ViT-S/14: self-supervised visual backbone (384-dim CLS token)
+        # Frozen — provides domain-general features robust to fisheye distortion
+        self.dinov2 = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14')
+        for p in self.dinov2.parameters():
+            p.requires_grad = False
+        self.dinov2.eval()
+
+        # DINOv2-ViT-S/14 outputs 384-dim, matching ActionFormer embed_dim directly
         self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
         self.actionformer_model = actionformer_model
-        
-        # Set ActionFormer to eval mode if it's frozen
-        if not any(p.requires_grad for p in actionformer_model.parameters()):
-            self.actionformer_model.eval()
-            # print("Actionformer model set to eval")
+
+    def train(self, mode=True):
+        super().train(mode)
+        # DINOv2 must always stay in eval mode (frozen, no running stat updates)
+        self.dinov2.eval()
+        return self
+
+    @staticmethod
+    def _make_divisible(size, patch_size=14):
+        """Round down to nearest multiple of patch_size."""
+        return (size // patch_size) * patch_size
 
     def forward(self, images):
         feat_block = []
-        images = images.transpose(0, 1)
-        for batch in images:
-            # ResNet forward pass (last layer is trainable)
-            features = self.resnet(batch)
-            features = features.reshape(features.size(0), -1)
-            features = self.bn(self.linear(features))
+        images = images.transpose(0, 1)  # (T, B, 3, H, W)
+        for batch in images:  # batch: (B, 3, H, W)
+            # Resize to nearest patch-aligned resolution (e.g. 256 → 252)
+            H, W = batch.shape[-2:]
+            new_H = self._make_divisible(H)
+            new_W = self._make_divisible(W)
+            if new_H != H or new_W != W:
+                batch = F.interpolate(batch, size=(new_H, new_W), mode='bilinear', align_corners=False)
+            with torch.no_grad():
+                features = self.dinov2(batch)  # (B, 384) CLS token
+            features = self.bn(features)
             feat_block.append(features)
-        
-        feat_block = torch.stack(feat_block, dim=1)
-        
-        # ActionFormer parameters are frozen (requires_grad=False) but gradients can flow through
+
+        feat_block = torch.stack(feat_block, dim=1)  # (B, T, 384)
+
         actionformer_features = self.actionformer_model(feat_block)
-        print("Actionformer features min/max:", actionformer_features.min().item(),
-              actionformer_features.max().item())
         return actionformer_features
 
     # def sample(self, features, homography, openpose, states=None):

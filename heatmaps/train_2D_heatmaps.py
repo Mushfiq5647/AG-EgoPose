@@ -44,8 +44,15 @@ def main(args):
     opt = TrainOptions().parse()
     train_loader = dataloader_full(opt, transform, mode='train')
     
-    # Model
-    model = HeatMap_Network(opt, model_name='resnet18').to(device)
+    # Model (now truly wired to CLI --backbone)
+    model = HeatMap_Network(opt, model_name=args.backbone).to(device)
+    # Explicitly ensure all params are trainable for heatmap backbone retraining
+    for p in model.parameters():
+        p.requires_grad = True
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Heatmap backbone: {args.backbone}")
+    print(f"Heatmap params (total/trainable): {total_params:,}/{trainable_params:,}")
     
     # Simple loss and optimizer
     pos_weight = torch.tensor(12.0, device=device)
@@ -84,31 +91,57 @@ def main(args):
                 print(f"GT heatmaps mean: {heatmaps_flat.mean().item():.6f}")
                 print(f"GT heatmaps non-zero count: {(heatmaps_flat > 0).sum().item()}")
             
-            # Forward pass with mixed precision
-            with autocast(device_type='cuda'):
-                pred_heatmaps = model(img_flat)  # [B*T, 15, 128, 128] - raw logits now
-            
-            # Debug: Check model predictions
-            if i == 0:  # Only print for first batch
-                print(f"Pred heatmaps dtype: {pred_heatmaps.dtype}")
-                print(f"Pred heatmaps min/max: {pred_heatmaps.min().item():.6f}/{pred_heatmaps.max().item():.6f}")
-                print(f"Pred heatmaps mean: {pred_heatmaps.mean().item():.6f}")
-                print(f"Pred heatmaps std: {pred_heatmaps.std().item():.6f}")
-            
-            # Convert predictions to FP32 for loss computation
-            pred_heatmaps = pred_heatmaps.float()
+            # Chunked forward pass for memory efficiency:
+            # keeps effective batch semantics while reducing peak VRAM.
             heatmaps_flat = heatmaps_flat.float()
-            loss = criterion(pred_heatmaps, heatmaps_flat)
+            n_total = img_flat.shape[0]
+            n_chunks = (n_total + args.chunk_size - 1) // args.chunk_size
+            running_loss = 0.0
+            debug_pred = None
+
+            # Accumulate gradients across chunks, then step once.
+            optimizer.zero_grad()
+            for c in range(n_chunks):
+                s = c * args.chunk_size
+                e = min((c + 1) * args.chunk_size, n_total)
+                img_chunk = img_flat[s:e]
+                hm_chunk = heatmaps_flat[s:e]
+
+                with autocast(device_type='cuda'):
+                    pred_chunk = model(img_chunk)
+
+                if i == 0 and c == 0:
+                    debug_pred = pred_chunk.detach()
+
+                # Normalize by number of chunks so total gradient matches full-batch average
+                chunk_loss = criterion(pred_chunk.float(), hm_chunk) / n_chunks
+                running_loss += chunk_loss.item()
+
+                if torch.isnan(chunk_loss) or torch.isinf(chunk_loss):
+                    print(f"WARNING: NaN/Inf chunk loss detected at step {i}, chunk {c}")
+                    running_loss = None
+                    break
+
+                scaler.scale(chunk_loss).backward()
+
+            if running_loss is None:
+                scaler.update()
+                continue
+
+            loss = torch.tensor(running_loss, device=device)
+
+            # Debug: Check model predictions
+            if debug_pred is not None and i == 0:  # Only print for first batch
+                print(f"Pred heatmaps dtype: {debug_pred.dtype}")
+                print(f"Pred heatmaps min/max: {debug_pred.min().item():.6f}/{debug_pred.max().item():.6f}")
+                print(f"Pred heatmaps mean: {debug_pred.mean().item():.6f}")
+                print(f"Pred heatmaps std: {debug_pred.std().item():.6f}")
             
             # Debug: Check for NaN/Inf and gradient norms
             if torch.isnan(loss) or torch.isinf(loss):
                 print(f"WARNING: NaN/Inf loss detected at step {i}")
                 continue
                 
-            # Backward pass with mixed precision
-            optimizer.zero_grad()
-            scaler.scale(loss).backward()
-            
             # Unscale gradients first (required for AMP)
             scaler.unscale_(optimizer)
             
@@ -134,7 +167,7 @@ def main(args):
             pbar.set_postfix({
                 'Loss': f'{loss.item():.4f}',
                 'GradNorm': f'{total_norm:.2e}',
-                'PredRange': f'{pred_heatmaps.min().item():.3f}-{pred_heatmaps.max().item():.3f}',
+                'PredRange': f'{debug_pred.min().item():.3f}-{debug_pred.max().item():.3f}' if debug_pred is not None else 'n/a',
                 'GT_Range': f'{heatmaps_flat.min().item():.3f}-{heatmaps_flat.max().item():.3f}'
             })
         
@@ -178,7 +211,13 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--backbone', type=str, default='resnet18', choices=['resnet18','resnet34','resnet50','resnet101'])
+    parser.add_argument(
+        '--backbone',
+        type=str,
+        default='convnext_tiny',
+        choices=['convnext_tiny', 'resnet18', 'resnet34', 'resnet50', 'resnet101'],
+        help='2D heatmap backbone to train'
+    )
     parser.add_argument('--num_joints', type=int, default=15)
     parser.add_argument('--num_heatmap', type=int, default=15, help='Number of heatmap channels')
 
@@ -188,6 +227,8 @@ if __name__ == '__main__':
     parser.add_argument('--num_epochs', type=int, default=30)  # Reasonable for heatmaps
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--chunk_size', type=int, default=64,
+                        help='number of flattened frames per forward chunk to reduce VRAM')
     parser.add_argument('--log_step', type=int, default=10)
     parser.add_argument('--save_interval', type=int, default=5)  # Save every 5 epochs
 

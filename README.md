@@ -38,6 +38,9 @@ If you don't want to train from scratch, you can download the following pre-trai
     - `utils/trained_model/encoder-best.ckpt`
     - `utils/trained_model/pose-decoder-best.ckpt`
     - `utils/trained_model/heatmap_embedding-best.ckpt`
+    - `utils/trained_model/spatial_transformer-best.ckpt`
+    - `utils/trained_model/pjtt-best.ckpt`
+    - `utils/trained_model/aive-best.ckpt`
 
 ## Datasets
 
@@ -137,6 +140,9 @@ Checkpoints are saved under `--model_path`:
 - `encoder-best.ckpt`
 - `pose-decoder-best.ckpt`
 - `heatmap_embedding-best.ckpt`
+- `spatial_transformer-best.ckpt`
+- `pjtt-best.ckpt`
+- `aive-best.ckpt`
 
 
 ### 3) Fine-tune (optional)
@@ -145,9 +151,12 @@ Checkpoints are saved under `--model_path`:
 python train_finetune.py \
   --model_path utils/exp_finetune \
   --heatmap_trained_path utils/trained_heatmaps/bce_combined/heatmap_best.ckpt \
-  --encoder_path utils/trained_model/encoder-best.ckpt \
-  --decoder_path utils/trained_model/pose-decoder-best.ckpt \
-  --heatmap_path utils/trained_model/heatmap_embedding-best.ckpt \
+  --encoder_path utils/trained_egopwtrain_bce_seq64/encoder-best.ckpt \
+  --decoder_path utils/trained_egopwtrain_bce_seq64/pose-decoder-best.ckpt \
+  --heatmap_path utils/trained_egopwtrain_bce_seq64/heatmap_embedding-best.ckpt \
+  --spatial_transformer_path utils/trained_egopwtrain_bce_seq64/spatial_transformer-best.ckpt \
+  --pjtt_path utils/trained_egopwtrain_bce_seq64/pjtt-best.ckpt \
+  --aive_path utils/trained_egopwtrain_bce_seq64/aive-best.ckpt
 ```
 
 ## Evaluate
@@ -158,6 +167,9 @@ python test.py \
   --decoder_path utils/trained_model/pose-decoder-best.ckpt \
   --heatmap_trained_path utils/trained_heatmaps/bce_combined/heatmap_best.ckpt \
   --heatmap_path utils/trained_model/heatmap_embedding-best.ckpt \
+  --spatial_transformer_path utils/trained_model/spatial_transformer-best.ckpt \
+  --pjtt_path utils/trained_model/pjtt-best.ckpt \
+  --aive_path utils/trained_model/aive-best.ckpt
 ```
 
 

@@ -23,15 +23,27 @@ TEST_DATASET = "EgoGlobal"
 
 
 def resolve_data_file_path(filename):
+    # Search order:
+    # 1) As-provided path (absolute or relative to current cwd)
+    # 2) Repository train/test list directory: train_test_directory/<filename>
+    # 3) Repository root: <repo>/<filename> (legacy behavior)
+    # 4) Parent of current file's directory (legacy fallback)
     if os.path.exists(filename):
         return filename
-    else:
-        # Look in parent directory
-        parent_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), filename)
-        if os.path.exists(parent_path):
-            return parent_path
-        else:
-            raise FileNotFoundError(f"Could not find {filename} in current directory or parent directory")
+
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidates = [
+        os.path.join(repo_root, 'train_test_directory', filename),
+        os.path.join(repo_root, filename),
+        os.path.join(os.path.dirname(repo_root), filename),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+
+    raise FileNotFoundError(
+        f"Could not find {filename}. Looked in cwd, train_test_directory, repo root, and parent directory."
+    )
 
 
 class Normalize(object):
@@ -76,6 +88,7 @@ def dataloader_full(opt, transform, mode='train', id=None):
         ds1 = EgoPwWindowDataset(opt, transform, mode)
         ds2 = SceneEgoWindowDataset(opt, transform, mode)
         datasets = ConcatDataset([ds1, ds2])
+
     dataset = torch.utils.data.DataLoader(
         datasets,
         batch_size=opt.batch_size,
@@ -166,10 +179,10 @@ class Mo2Cap2WindowDataset(torch.utils.data.Dataset):
 
 
 class EgoPwWindowDataset(torch.utils.data.Dataset):
-    def __init__(self, opt, transform, mode, window_size=32, stride=8):
+    def __init__(self, opt, transform, mode, window_size=None, stride=None):
         self.transform = transform
-        self.window_size = window_size
-        self.stride = stride
+        self.window_size = window_size if window_size is not None else getattr(opt, 'seq_length', 64)
+        self.stride = stride if stride is not None else getattr(opt, 'stride', 64)
 
         # Read sequence directories
         sequnce_directory = f'{mode}_egopw.txt'
@@ -178,13 +191,13 @@ class EgoPwWindowDataset(torch.utils.data.Dataset):
         with open(file_path, 'r') as f:
             seq_dirs = [l.strip() for l in f if l.strip()]
 
-        self.sequences = []   # list of (file_paths, heatmap_dir)
+        self.sequences = []   # list of file_paths
         self.gt_dicts  = []   # list of ground-truth maps
+        self.sequence_roots = []  # list of source sequence folders
         self.index     = []   # list of (seq_idx, start_idx)
 
         for seq_idx, base in enumerate(seq_dirs):
             img_dir = os.path.join(base, 'imgs')
-            hm_dir = os.path.join(base, 'heatmap64_2.0')
 
             # Load ground-truth list and build map
             with open(os.path.join(base, 'pseudo_gt.pkl'), 'rb') as f:
@@ -206,43 +219,35 @@ class EgoPwWindowDataset(torch.utils.data.Dataset):
             )
 
             if bad_imgs:
-                before = len(gt_map)
                 gt_map = {k: v for k, v in gt_map.items() if k not in bad_imgs}
-                # print(f"   → pruned GT: {before} → {len(gt_map)}")
 
             # 3) Build full paths and store
             full_paths = [os.path.join(img_dir, f) for f in files]
-            self.sequences.append((full_paths))
+            self.sequences.append(full_paths)
             self.gt_dicts.append(gt_map)
-            # print("Image count", len(full_paths))
-            # print("Gt count", len(gt_map))
+            self.sequence_roots.append(base)
 
             # 4) Create sliding-window indices on filtered list
             L = len(full_paths)
-            for start in range(0, L - window_size + 1, stride):
-                self.index.append((seq_idx, hm_dir, start))
+            for start in range(0, L - self.window_size + 1, self.stride):
+                self.index.append((seq_idx, start))
 
     def __len__(self):
         return len(self.index)
 
     def __getitem__(self, idx):
-        seq_idx, hm_dir, start = self.index[idx]
+        seq_idx, start = self.index[idx]
         img_paths = self.sequences[seq_idx]
         gt_map = self.gt_dicts[seq_idx]
 
-        # Extract one window of valid images only
         window = img_paths[start:start + self.window_size]
 
-        imgs, hms, poses = [], [], []
+        imgs, poses = [], []
         for p in window:
             name = os.path.basename(p)
-            if name.startswith("img_"):
-                suffix = name[len("img_"):]
-            else:
-                suffix = name
-
             info = gt_map[name]
-            # Load and convert pose (guaranteed no NaN)
+
+            # Load pose (guaranteed no NaN)
             pose_np = info['optimized_local_pose']
             poses.append(torch.from_numpy(pose_np).float())
 
@@ -252,29 +257,22 @@ class EgoPwWindowDataset(torch.utils.data.Dataset):
                 img = self.transform(img)
             imgs.append(img)
 
-            # Load precomputed heatmap
-            heatmap_filename = "heatmap_" + suffix.replace('.jpg', '.npy')
-            hm_path = os.path.join(hm_dir, heatmap_filename)
-            hm = np.load(hm_path)
-            hms.append(torch.from_numpy(hm).float())
-
         # Stack into tensors
-        img_batch  = torch.stack(imgs,  dim=0)  # (T,3,H,W)
-        hm_batch   = torch.stack(hms,  dim=0)   # (T,J,H,W)
-        pose_batch = torch.stack(poses, dim=0)  # (T,J,3)
+        img_batch  = torch.stack(imgs,  dim=0)   # (T,3,H,W)
+        pose_batch = torch.stack(poses, dim=0)   # (T,J,3)
 
         return {
-            'input_rgb':    img_batch,
-            'gt_heatmap':   hm_batch,
-            'gt_local_pose':pose_batch
+            'input_rgb':     img_batch,
+            'gt_local_pose': pose_batch,
+            'sequence_folder': self.sequence_roots[seq_idx]
         }
 
 
 class SceneEgoWindowDataset(torch.utils.data.Dataset):
-    def __init__(self, opt, transform, mode, window_size=64, stride=64):
+    def __init__(self, opt, transform, mode, window_size=None, stride=None):
         self.transform = transform
-        self.window_size = window_size
-        self.stride = stride
+        self.window_size = window_size if window_size is not None else getattr(opt, 'seq_length', 64)
+        self.stride = stride if stride is not None else getattr(opt, 'stride', 32)
 
         # Read sequence directories
         sequnce_directory = f'{mode}_sceneego.txt'
@@ -283,42 +281,39 @@ class SceneEgoWindowDataset(torch.utils.data.Dataset):
         with open(file_path, 'r') as f:
             seq_dirs = [l.strip() for l in f if l.strip()]
 
-        self.sequences = []   # list of (file_paths, heatmap_dir)
+        self.sequences = []   # list of file_paths
         self.gt_dicts  = []   # list of ground-truth maps
+        self.sequence_roots = []  # list of source sequence folders
         self.index     = []   # list of (seq_idx, start_idx)
 
         for seq_idx, base in enumerate(seq_dirs):
             img_dir = os.path.join(base, 'imgs')
-            hm_dir = os.path.join(base, 'heatmap64_2.0')
 
             # Load annotation data
             with open(os.path.join(base, 'local_pose_gt.pkl'), 'rb') as f:
                 annotation_list = pkl.load(f)
-            
+
             # Load synchronization data
             with open(os.path.join(base, 'syn.json'), 'r') as f:
                 syn_data = json.load(f)
-            
+
             ego_start_frame = syn_data['ego']
             ext_start_frame = syn_data['ext']
-            
-            # Create mapping from external ID to egocentric image name and pose
+
+            # Create mapping from egocentric image name to pose
             gt_map = {}
             for annotation in annotation_list:
                 ext_id = annotation['ext_id']
                 ego_id = ext_id - ext_start_frame + ego_start_frame
                 ego_image_name = f"img_{ego_id:06d}.jpg"
-                
-                # Store the ego_pose_gt as the pose data
                 gt_map[ego_image_name] = {
                     'ego_pose_gt': annotation['ego_pose_gt'],
-                    'ext_id': ext_id,
                     'ego_id': ego_id
                 }
-            
+
             print(f"Sequence {base}: {len(annotation_list)} annotations mapped to {len(gt_map)} egocentric images")
-            
-            # 1) Identify and remove corrupted images
+
+            # 1) Remove corrupted poses
             bad_imgs = set()
             for name, info in gt_map.items():
                 try:
@@ -326,53 +321,45 @@ class SceneEgoWindowDataset(torch.utils.data.Dataset):
                     if np.isnan(pose_array).any():
                         bad_imgs.add(name)
                 except (ValueError, TypeError):
-                    # Handle non-numeric data
                     bad_imgs.add(name)
             if bad_imgs:
                 print(f"⚠️ Sequence {base}: removing {len(bad_imgs)} corrupt images")
                 gt_map = {k: v for k, v in gt_map.items() if k not in bad_imgs}
 
-            # 2) List all jpg files in the directory
+            # 2) List and filter jpg files to those with valid GT
             all_files = natsorted([f for f in os.listdir(img_dir) if f.endswith('.jpg')])
-            print(f"Sequence {base}: {len(all_files)} total images in directory")
-            
-            # 3) Filter to only images that have ground truth
             valid_files = [f for f in all_files if f in gt_map]
-            print(f"Sequence {base}: {len(valid_files)} images with ground truth")
+            print(f"Sequence {base}: {len(valid_files)}/{len(all_files)} images have ground truth")
 
-            # 4) Build full paths and store
+            # 3) Build full paths and store
             full_paths = [os.path.join(img_dir, f) for f in valid_files]
-            self.sequences.append((full_paths))
+            self.sequences.append(full_paths)
             self.gt_dicts.append(gt_map)
+            self.sequence_roots.append(base)
 
-            # 5) Create sliding-window indices on filtered list
+            # 4) Create sliding-window indices on filtered list
             L = len(full_paths)
-            for start in range(0, L - window_size + 1, stride):
-                self.index.append((seq_idx, hm_dir, start))
+            for start in range(0, L - self.window_size + 1, self.stride):
+                self.index.append((seq_idx, start))
 
     def __len__(self):
         return len(self.index)
 
     def __getitem__(self, idx):
-        seq_idx, hm_dir, start = self.index[idx]
+        seq_idx, start = self.index[idx]
         img_paths = self.sequences[seq_idx]
         gt_map = self.gt_dicts[seq_idx]
 
-        # Extract one window of valid images only
         window = img_paths[start:start + self.window_size]
 
-        imgs, hms, poses = [], [], []
+        imgs, poses = [], []
         for p in window:
             name = os.path.basename(p)
-            if name.startswith("img_"):
-                suffix = name[len("img_"):]
-            else:
-                suffix = name
-            
             info = gt_map[name]
-            # Load and convert pose (guaranteed no NaN)
-            pose_np = np.array(info['ego_pose_gt'])  # Use ego_pose_gt and convert to numpy array
-            poses.append(torch.from_numpy(pose_np).float())
+
+            # Load pose — ego_pose_gt is expected to be in meters (same as EgoPW)
+            pose_np = np.array(info['ego_pose_gt'], dtype=np.float32)
+            poses.append(torch.from_numpy(pose_np))
 
             # Load image
             img = Image.open(p).convert('RGB')
@@ -380,20 +367,14 @@ class SceneEgoWindowDataset(torch.utils.data.Dataset):
                 img = self.transform(img)
             imgs.append(img)
 
-            heatmap_filename = "heatmap_" + suffix.replace('.jpg', '.npy')
-            hm_path = os.path.join(hm_dir, heatmap_filename)
-            hm = np.load(hm_path)
-            hms.append(torch.from_numpy(hm).float())
-
         # Stack into tensors
-        img_batch  = torch.stack(imgs,  dim=0)  # (T,3,H,W)
-        hm_batch = torch.stack(hms, dim=0)  # (T,J,H,W)
-        pose_batch = torch.stack(poses, dim=0)  # (T,J,3)
+        img_batch  = torch.stack(imgs,  dim=0)   # (T,3,H,W)
+        pose_batch = torch.stack(poses, dim=0)   # (T,J,3)
 
         return {
-            'input_rgb':    img_batch,
-            'gt_heatmap': hm_batch,
-            'gt_local_pose':pose_batch
+            'input_rgb':     img_batch,
+            'gt_local_pose': pose_batch,
+            'sequence_folder': self.sequence_roots[seq_idx]
         }
 
 

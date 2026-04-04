@@ -89,12 +89,18 @@ class ConvTransformerBackbone(nn.Module):
             )
 
         # main branch using transformer with pooling
+        # For seq_len=64 with 7 branches and scale_factor=2:
+        # Only first 3 branches downsample: 64→32→16→8
+        # Later branches (3+) use stride (1,1) to preserve temporal resolution
         self.branch = nn.ModuleList()
+        num_downsample_branches = min(3, arch[2])  # Cap downsampling to first 3 branches
         for idx in range(arch[2]):
+            # Downsample in early branches, preserve resolution in later branches
+            ds_stride = self.scale_factor if idx < num_downsample_branches else 1
             self.branch.append(
                 TransformerBlock(
                     n_embd, n_head,
-                    n_ds_strides=(self.scale_factor, self.scale_factor),
+                    n_ds_strides=(ds_stride, ds_stride),
                     attn_pdrop=attn_pdrop,
                     proj_pdrop=proj_pdrop,
                     path_pdrop=path_pdrop,

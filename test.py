@@ -9,7 +9,10 @@ from utils.action_recognition import initialize_actionformer
 from options.test_options import TestOptions
 from utils.data_loader import dataloader_full
 from utils.cross_attention_model import HeatmapToJointFeatures
+from utils.cross_attention_model import SpatialStatsExtractor
 from utils.cross_attention_model import SpatialJointTransformer
+from utils.cross_attention_model import PerJointTrajectoryTokens
+from utils.cross_attention_model import ActionInformedVisibilityEstimation
 from utils.cross_attention_model import PoseDecoder
 from utils.loss import LossFuncMPJPE
 from heatmaps.network_heatmap import HeatMap_Network
@@ -91,11 +94,14 @@ def main(args):
     for param in actionformer_feature_extractor.parameters():
         param.requires_grad = False
     print("ActionFormer frozen")
-    # Initialize models (same as train.py)
-    net_heatmap = HeatMap_Network(opt, model_name='resnet18').to(device)
+    # Initialize models (match train.py)
+    net_heatmap = HeatMap_Network(opt, model_name=args.heatmap_backbone).to(device)
     heatmap_embedding = HeatmapToJointFeatures(heatmap_size=64, feature_dim=128, method='conv_pool').to(device)
+    spatial_stats_extractor = SpatialStatsExtractor(heatmap_size=64).to(device)
     encoder = FeatureEncoder(actionformer_feature_extractor).to(device)
     spatial_joint_transformer = SpatialJointTransformer(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
+    pjtt = PerJointTrajectoryTokens(num_joints=15, motion_dim=384, num_heads=4).to(device)
+    aive = ActionInformedVisibilityEstimation(motion_dim=384, joint_dim=args.hm_embed_dim).to(device)
     # pose_decoder = PoseDecoder(motion_dim=384, joint_dim=128, out_dim=3).to(device)
     pose_decoder = PoseDecoder(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
     # Load pre-trained 2D heatmap network
@@ -123,12 +129,21 @@ def main(args):
     print(f"Loading spatial transformer from {args.spatial_transformer_path}")
     spatial_joint_transformer.load_state_dict(torch.load(args.spatial_transformer_path, map_location=device))
 
+    print(f"Loading PJTT from {args.pjtt_path}")
+    pjtt.load_state_dict(torch.load(args.pjtt_path, map_location=device))
+
+    print(f"Loading AIVE from {args.aive_path}")
+    aive.load_state_dict(torch.load(args.aive_path, map_location=device))
+
     # Set all models to evaluation mode
     net_heatmap.eval()
     encoder.eval()
     pose_decoder.eval()
     heatmap_embedding.eval()
+    spatial_stats_extractor.eval()
     spatial_joint_transformer.eval()
+    pjtt.eval()
+    aive.eval()
     
     print("All models loaded and set to evaluation mode")
 
@@ -147,6 +162,7 @@ def main(args):
             print("Printing iteration number:", i)
             # Instead of: for i, (images, homography, gt_egoposes, lengths) in enumerate(data_loader)
             images = batch['input_rgb'].to(device)  # Tensor
+            sequence_folders = batch.get('sequence_folder')
             B, T, _, H_img, W_img = images.shape
             H_hm, W_hm = 64, 64
             gt_egoposes = batch['gt_local_pose'].to(device)
@@ -160,9 +176,12 @@ def main(args):
                 # T, 15, H_hm, W_hm]
             motion_features = encoder(images)
             heatmap_features = heatmap_embedding(heatmaps)
+            spatial_stats = spatial_stats_extractor(heatmaps)
             spatial_joint_features = spatial_joint_transformer(heatmap_features)
+            traj_tokens = pjtt(motion_features)
+            gated_features = aive(spatial_joint_features, spatial_stats, traj_tokens)
             print("Passed spatial_joint_features")
-            pose_logits = pose_decoder(heatmap_features, motion_features)
+            pose_logits = pose_decoder(gated_features, motion_features)
             print("Passed decoder")
 
             # Reshape to pose format
@@ -199,7 +218,12 @@ def main(args):
             # gt_np = gt_reshaped.detach().cpu().numpy()
             # ba_mpjpe = calculate_ba_mpjpe(final_np, gt_np, skeleton_model=None)
             
-            print(f'Batch [{i + 1}/{len(test_loader)}], MPJPE: {mpjpe_loss:.4f}, PA-MPJPE: {pa_mpjpe:.4f}')
+            sequence_label = sequence_folders if sequence_folders is not None else "unknown"
+            print(
+                f'Batch [{i + 1}/{len(test_loader)}], '
+                f'Sequence: {sequence_label}, '
+                f'MPJPE: {mpjpe_loss:.4f}, PA-MPJPE: {pa_mpjpe:.4f}'
+            )
             
             # Accumulate errors
             total_mpjpe += mpjpe_loss.item() * B * T
@@ -242,6 +266,11 @@ if __name__ == '__main__':
     parser.add_argument('--heatmap_trained_path', type=str, required=True, help='path for trained 2D heatmap')
     parser.add_argument('--heatmap_path', type=str, required=True, help='path for trained heatmap embedding')
     parser.add_argument('--spatial_transformer_path', type=str, required=True, help='path for trained spatial transformer')
+    parser.add_argument('--pjtt_path', type=str, default=None, help='path for trained PJTT')
+    parser.add_argument('--aive_path', type=str, default=None, help='path for trained AIVE')
+    parser.add_argument('--heatmap_backbone', type=str, default='convnext_tiny',
+                        choices=['convnext_tiny', 'resnet18', 'resnet34', 'resnet50', 'resnet101'],
+                        help='backbone used by the trained 2D heatmap model')
     # parser.add_argument('--test_annotation_path', type=str, required=True, help='path for annotation wrapper')
 
     # Directories
@@ -256,7 +285,8 @@ if __name__ == '__main__':
     parser.add_argument('--hm_embed_dim', type=int, default=128, help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int, default=512, help='dimension of lstm hidden states')
     parser.add_argument('--num_layers', type=int, default=2, help='number of layers in lstm')
-    parser.add_argument('--seq_length', type=int, default=32, help='length of the pose/video sequences')
+    parser.add_argument('--seq_length', type=int, default=64, help='length of the pose/video sequences')
+    parser.add_argument('--stride', type=int, default=64, help='sliding window stride for dataset construction')
 
     # Other settings
     parser.add_argument('--batch_size', type=int, default=8)
@@ -265,4 +295,10 @@ if __name__ == '__main__':
     parser.add_argument('--log_step', type=int, default=10, help='step size for printing log info')
 
     args = parser.parse_args()
+    # Convenience fallback: infer pjtt/aive from the decoder checkpoint directory
+    ckpt_dir = os.path.dirname(args.decoder_path)
+    if args.pjtt_path is None:
+        args.pjtt_path = os.path.join(ckpt_dir, 'pjtt-best.ckpt')
+    if args.aive_path is None:
+        args.aive_path = os.path.join(ckpt_dir, 'aive-best.ckpt')
     main(args)

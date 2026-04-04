@@ -46,16 +46,20 @@ class HeatmapToJointFeatures(nn.Module):
 
         elif method == 'conv_pool':
             # Balanced approach: Light conv + spatial pooling
+            # GELU + BatchNorm prevent dead neurons (ReLU kills gradients on sigmoid heatmap inputs)
             self.conv_layers = nn.Sequential(
-                nn.Conv2d(1, 16, 3, padding=1),  # 64x64 -> 64x64
-                nn.ReLU(),
+                nn.Conv2d(1, 16, 3, padding=1),       # 64x64 -> 64x64
+                nn.BatchNorm2d(16),
+                nn.GELU(),
                 nn.Conv2d(16, 32, 3, stride=2, padding=1),  # 64x64 -> 32x32
-                nn.ReLU(),
+                nn.BatchNorm2d(32),
+                nn.GELU(),
                 nn.Conv2d(32, 64, 3, stride=2, padding=1),  # 32x32 -> 16x16
-                nn.ReLU(),
-                nn.AdaptiveAvgPool2d((4, 4))  # 16x16 -> 4x4
+                nn.BatchNorm2d(64),
+                nn.GELU(),
+                nn.AdaptiveAvgPool2d((4, 4))           # 16x16 -> 4x4
             )
-            self.proj = nn.Linear(64 * 4 * 4, feature_dim)  # 64*16 -> 128
+            self.proj = nn.Linear(64 * 4 * 4, feature_dim)  # 1024 -> 128
             self.layer_norm = nn.LayerNorm(feature_dim)
 
 
@@ -79,7 +83,7 @@ class HeatmapToJointFeatures(nn.Module):
         B, T, J, H, W = heatmaps.shape
         
         # Reshape for processing: (B*T*J, 1, H, W)
-        heatmaps_flat = heatmaps.view(B*T*J, 1, H, W)
+        heatmaps_flat = heatmaps.reshape(B*T*J, 1, H, W)
         
         if self.method == 'adaptive_pool':
             # Global average pooling
@@ -107,6 +111,61 @@ class HeatmapToJointFeatures(nn.Module):
         return joint_features
 
 
+class SpatialStatsExtractor(nn.Module):
+    """Lightweight differentiable stats from heatmaps for AIVE visibility gating.
+
+    Computes 8 uncertainty descriptors per joint: (x, y, var_x, var_y,
+    cov_xy, entropy, peak, top2_gap). These feed ONLY into the AIVE
+    visibility gate — the main spatial feature path uses the conv encoder.
+
+    No learnable parameters: purely functional stats extraction.
+    """
+
+    NUM_STATS = 8
+
+    def __init__(self, heatmap_size=64, temperature=10.0):
+        super().__init__()
+        self.temperature = temperature
+
+        grid_y, grid_x = torch.meshgrid(
+            torch.linspace(0, 1, heatmap_size),
+            torch.linspace(0, 1, heatmap_size),
+            indexing='ij'
+        )
+        self.register_buffer('grid_x', grid_x.reshape(-1))
+        self.register_buffer('grid_y', grid_y.reshape(-1))
+
+    def forward(self, heatmaps):
+        """
+        Args:
+            heatmaps: (B, T, J, H, W)
+        Returns:
+            spatial_stats: (B, T, J, 8)
+        """
+        B, T, J, H, W = heatmaps.shape
+        N = B * T * J
+        hm = heatmaps.reshape(N, H * W)
+
+        probs = F.softmax(hm * self.temperature, dim=-1)
+        x = (probs * self.grid_x).sum(dim=-1)
+        y = (probs * self.grid_y).sum(dim=-1)
+
+        dx = self.grid_x.unsqueeze(0) - x.unsqueeze(1)
+        dy = self.grid_y.unsqueeze(0) - y.unsqueeze(1)
+        var_x = (probs * dx * dx).sum(dim=-1)
+        var_y = (probs * dy * dy).sum(dim=-1)
+        cov_xy = (probs * dx * dy).sum(dim=-1)
+
+        entropy = -(probs * torch.log(probs + 1e-8)).sum(dim=-1)
+        peak = hm.amax(dim=-1)
+
+        top2 = hm.topk(2, dim=-1).values
+        top2_gap = top2[:, 0] - top2[:, 1]
+
+        stats = torch.stack([x, y, var_x, var_y, cov_xy, entropy, peak, top2_gap], dim=-1)
+        return stats.view(B, T, J, self.NUM_STATS)
+
+
 class SpatialJointTransformer(nn.Module):
     """Spatial transformer for modeling joint relationships"""
     
@@ -114,7 +173,7 @@ class SpatialJointTransformer(nn.Module):
         super(SpatialJointTransformer, self).__init__()
         self.feature_dim = feature_dim
 
-        # self.joint_id = JointIDEncoding(num_joints=15, dim=feature_dim, p_drop=0.1)
+        self.joint_id = JointIDEncoding(num_joints=15, dim=feature_dim, p_drop=0.1)
         
         # Transformer encoder layer
         encoder_layer = nn.TransformerEncoderLayer(
@@ -140,10 +199,10 @@ class SpatialJointTransformer(nn.Module):
         """
         B, T, J, feature_dim = joint_features.shape
 
+        # Add learned joint identity embeddings (breaks permutation equivariance, resolves left/right ambiguity)
+        joint_features = self.joint_id(joint_features)  # (B, T, J, feature_dim)
+
         joint_input = joint_features.view(B*T, J, feature_dim)
-        
-        # Apply transformer across joints (remove layer norm before transformer)
-        # joint_input = self.layer_norm(joint_input)
         enhanced_joints = self.transformer(joint_input)  # (B*T, J, feature_dim)
         
         # Layer normalization
@@ -153,6 +212,113 @@ class SpatialJointTransformer(nn.Module):
         enhanced_joints = enhanced_joints.view(B, T, J, feature_dim)
         
         return enhanced_joints
+
+
+class PerJointTrajectoryTokens(nn.Module):
+    """Per-joint cross-attention on the ActionFormer temporal sequence
+    with FiLM modulation for time-aware trajectory tokens.
+
+    Each joint has a learnable query that independently attends to the
+    temporal feature sequence, extracting joint-specific motion context.
+    FiLM modulation adds frame-specific motion dynamics so that the
+    trajectory token for the wrist at frame 10 differs from frame 50.
+    """
+
+    def __init__(self, num_joints=15, motion_dim=384, num_heads=4):
+        super().__init__()
+        self.motion_dim = motion_dim
+        self.joint_queries = nn.Parameter(torch.randn(num_joints, motion_dim))
+        nn.init.normal_(self.joint_queries, std=0.02)
+        self.cross_attn = nn.MultiheadAttention(
+            motion_dim, num_heads=num_heads, batch_first=True
+        )
+        self.layer_norm = nn.LayerNorm(motion_dim)
+
+        # Joint-aware FiLM modulation: per-frame motion + joint query → joint-specific offset
+        # tau_{t,j} = tau_j + film_proj([m_t, tau_j])  — each joint gets distinct temporal modulation
+        self.film_proj = nn.Sequential(
+            nn.Linear(motion_dim * 2, motion_dim),
+            nn.GELU(),
+            nn.Linear(motion_dim, motion_dim),
+            nn.LayerNorm(motion_dim)
+        )
+
+    def forward(self, motion_seq):
+        """
+        Args:
+            motion_seq: (B, T, motion_dim) — ActionFormer temporal output
+        Returns:
+            traj_tokens: (B, T, J, motion_dim) — time-varying per-joint trajectory tokens
+        """
+        B, T, D = motion_seq.shape
+        J = self.joint_queries.shape[0]
+
+        # Joint-specific cross-attention over full temporal sequence
+        queries = self.joint_queries.unsqueeze(0).expand(B, -1, -1)  # (B, J, D)
+        traj_tokens, _ = self.cross_attn(queries, motion_seq, motion_seq)
+        traj_tokens = self.layer_norm(traj_tokens + queries)  # (B, J, D) — joint identity tokens
+
+        # Joint-aware FiLM: each joint gets a distinct temporal modulation
+        # Combine per-frame motion (B,T,D) with per-joint tokens (B,J,D)
+        motion_exp = motion_seq.unsqueeze(2).expand(-1, -1, J, -1)     # (B, T, J, D)
+        joint_exp = traj_tokens.unsqueeze(1).expand(-1, T, -1, -1)     # (B, T, J, D)
+        film_input = torch.cat([motion_exp, joint_exp], dim=-1)         # (B, T, J, 2D)
+        film_offset = self.film_proj(film_input)                        # (B, T, J, D)
+        # tau_{t,j} = tau_j + film([m_t, tau_j])
+        traj_tokens = joint_exp + film_offset                           # (B, T, J, D)
+
+        return traj_tokens
+
+
+class ActionInformedVisibilityEstimation(nn.Module):
+    """Cross-stream visibility gate using spatial uncertainty stats + trajectory tokens.
+
+    Uses rich heatmap statistics (variance, entropy, peak, top2_gap) and
+    time-varying trajectory tokens to decide per-joint, per-frame visibility.
+    Visible joints trust spatial features; occluded joints fall back to
+    motion-derived trajectory features.
+    """
+
+    def __init__(self, motion_dim=384, joint_dim=128, num_spatial_stats=8):
+        super().__init__()
+        # Gate now receives 8 spatial stats + motion_dim trajectory features
+        self.visibility_gate = nn.Sequential(
+            nn.Linear(num_spatial_stats + motion_dim, 128),
+            nn.GELU(),
+            nn.Linear(128, 1)
+        )
+        self.traj_proj = nn.Linear(motion_dim, joint_dim)
+
+    def forward(self, spatial_features, spatial_stats, traj_tokens):
+        """
+        Args:
+            spatial_features: (B, T, J, joint_dim) — from SpatialJointTransformer
+            spatial_stats: (B, T, J, 8) — rich uncertainty stats from SoftArgmaxJointEncoding
+            traj_tokens: (B, T, J, motion_dim) — time-varying from PerJointTrajectoryTokens
+        Returns:
+            gated_features: (B, T, J, joint_dim) — visibility-gated joint features
+        """
+        B, T, J, D = spatial_features.shape
+
+        # Gate input: [spatial_stats, tau_{t,j}]
+        gate_input = torch.cat([
+            spatial_stats,    # (B, T, J, 8) — x, y, var_x, var_y, cov_xy, entropy, peak, top2_gap
+            traj_tokens       # (B, T, J, motion_dim) — time-varying trajectory tokens
+        ], dim=-1)  # (B, T, J, 8 + motion_dim)
+
+        v_j_raw = torch.sigmoid(
+            self.visibility_gate(gate_input.reshape(B * T * J, -1))
+        ).view(B, T, J, 1)
+
+        # Clamp gate to [0.05, 0.95] to prevent sigmoid saturation from killing gradients
+        v_j = 0.05 + 0.9 * v_j_raw
+
+        # Project trajectory tokens to spatial feature dimension
+        traj_feat = self.traj_proj(traj_tokens)  # (B, T, J, joint_dim)
+
+        # Soft gate: visible → spatial, occluded → trajectory
+        gated = v_j * spatial_features + (1.0 - v_j) * traj_feat
+        return gated
 
 
 class PoseDecoder(nn.Module):

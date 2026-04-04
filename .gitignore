@@ -16,3 +16,9 @@ utils/sceneego_seq128
 visualization/*
 train_test_directory/*
 model_analysis/*
+.codex
+CLAUDE.md
+loss_log_egopw_bce.txt
+loss_log_finetune_seq64.txt
+sceneego/
+test_results.txt

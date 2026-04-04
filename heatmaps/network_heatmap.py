@@ -101,7 +101,15 @@ class Encoder_Block(nn.Module):
     def __init__(self, opt, model_name='resnet50'):
         super(Encoder_Block, self).__init__()
 
-        if model_name == 'resnet18':
+        if model_name == 'convnext_tiny':
+            backbone = models.convnext_tiny(weights='DEFAULT')
+            # ConvNeXt-Tiny feature stages: 96 → 192 → 384 → 768
+            self.layer0 = backbone.features[0]                                          # stem: C=96, stride 4
+            self.layer1 = backbone.features[1]                                          # stage 1: C=96, H/4
+            self.layer2 = nn.Sequential(backbone.features[2], backbone.features[3])     # downsample + stage 2: C=192, H/8
+            self.layer3 = nn.Sequential(backbone.features[4], backbone.features[5])     # downsample + stage 3: C=384, H/16
+            self.layer4 = nn.Sequential(backbone.features[6], backbone.features[7])     # downsample + stage 4: C=768, H/32
+        elif model_name == 'resnet18':
             self.backbone = models.resnet18(pretrained=opt.init_ImageNet)
         elif model_name == "resnet34":
             self.backbone = models.resnet34(pretrained=opt.init_ImageNet)
@@ -112,12 +120,13 @@ class Encoder_Block(nn.Module):
         else:
             raise NotImplementedError('model type [%s] is invalid', model_name)
 
-        self.base_layers = list(self.backbone.children())
-        self.layer0 = nn.Sequential(*self.base_layers[:3])  # size=(N, 64, x.H/2, x.W/2)
-        self.layer1 = nn.Sequential(*self.base_layers[3:5])  # size=(N, 64, x.H/4, x.W/4)
-        self.layer2 = self.base_layers[5]  # size=(N, 128, x.H/8, x.W/8)
-        self.layer3 = self.base_layers[6]  # size=(N, 256, x.H/16, x.W/16)
-        self.layer4 = self.base_layers[7]  # size=(N, 512, x.H/32, x.W/32)
+        if model_name != 'convnext_tiny':
+            self.base_layers = list(self.backbone.children())
+            self.layer0 = nn.Sequential(*self.base_layers[:3])  # size=(N, 64, x.H/2, x.W/2)
+            self.layer1 = nn.Sequential(*self.base_layers[3:5])  # size=(N, 64, x.H/4, x.W/4)
+            self.layer2 = self.base_layers[5]  # size=(N, 128, x.H/8, x.W/8)
+            self.layer3 = self.base_layers[6]  # size=(N, 256, x.H/16, x.W/16)
+            self.layer4 = self.base_layers[7]  # size=(N, 512, x.H/32, x.W/32)
 
     def forward(self, input):
         layer0 = self.layer0(input)
@@ -134,20 +143,11 @@ class HeatMap_UnrealEgo_AfterBackbone(nn.Module):
     def __init__(self, opt, model_name="resnet50"):
         super(HeatMap_UnrealEgo_AfterBackbone, self).__init__()
 
-        if model_name == 'resnet18':
-            feature_scale = 1
-        elif model_name == "resnet34":
-            feature_scale = 1
-        elif model_name == "resnet50":
-            feature_scale = 2
-        elif model_name == "resnet101":
-            feature_scale = 2
-        else:
-            raise NotImplementedError('model type [%s] is invalid', model_name)
-
         self.num_heatmap = opt.num_heatmap
 
-        if model_name in ("resnet18", "resnet34"):
+        if model_name == 'convnext_tiny':
+            c1, c2, c3, c4 = 96, 192, 384, 768
+        elif model_name in ("resnet18", "resnet34"):
             c1, c2, c3, c4 = 64, 128, 256, 512
         elif model_name in ("resnet50", "resnet101"):
             c1, c2, c3, c4 = 256, 512, 1024, 2048

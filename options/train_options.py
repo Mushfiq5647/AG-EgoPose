@@ -20,15 +20,15 @@ class TrainOptions(BaseOptions):
 
 
         # ------------------------------ learning rate and loss weight ------------------------------ #
-        self.parser.add_argument('--optimizer_type', type=str, default='Adam',
+        self.parser.add_argument('--optimizer_type', type=str, default='AdamW',
                                  help='optimizer type[Adam|SGD]')
         self.parser.add_argument('--lr_policy', type=str, default='lambda',
                                  help='learning rate policy[lambda|step|plateau]')
         self.parser.add_argument('--lr_decay_iters_step', type=int, default=4,
                                  help='of iter to decay learning rate with a policy [step]')
-        self.parser.add_argument('--lr', type=float, default=1e-3,
+        self.parser.add_argument('--lr', type=float, default=3e-4,
                                  help='initial learning rate for adam')
-        self.parser.add_argument('--weight_decay', type=float, default=0.0,
+        self.parser.add_argument('--weight_decay', type=float, default=1e-4,
                                  help='weight decay')
 
         self.parser.add_argument('--lambda_mpjpe', type=float, default=5.0,
