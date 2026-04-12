@@ -11,10 +11,7 @@ from utils.action_recognition import initialize_actionformer
 from options.train_options import TrainOptions
 from utils.data_loader import dataloader_full
 from utils.cross_attention_model import HeatmapToJointFeatures
-from utils.cross_attention_model import SpatialStatsExtractor
 from utils.cross_attention_model import SpatialJointTransformer
-from utils.cross_attention_model import PerJointTrajectoryTokens
-from utils.cross_attention_model import ActionInformedVisibilityEstimation
 from utils.cross_attention_model import PoseDecoder
 from heatmaps.network_heatmap import HeatMap_Network
 from utils.loss import LossFuncLimb, LossFuncMPJPE, LossFuncCosSim  # Add bone length loss import
@@ -189,14 +186,10 @@ def main(args):
         print(f"Warning: Pre-trained heatmap model not found at {args.heatmap_trained_path}")
         print("Will use ground truth heatmaps for training")
     
-    # Main spatial path: conv encoder extracts rich 128-dim features from 64x64 heatmaps
+    # Spatial path: conv encoder extracts rich 128-dim features from 64x64 heatmaps
     heatmap_embedding = HeatmapToJointFeatures(heatmap_size=64, feature_dim=args.hm_embed_dim, method='conv_pool').to(device)
-    # Side path: lightweight stats (8-dim) for AIVE visibility gate only (no learnable params)
-    spatial_stats_extractor = SpatialStatsExtractor(heatmap_size=64).to(device)
     encoder = FeatureEncoder(actionformer_feature_extractor).to(device)
     spatial_joint_transformer = SpatialJointTransformer(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
-    pjtt = PerJointTrajectoryTokens(num_joints=15, motion_dim=384, num_heads=4).to(device)
-    aive = ActionInformedVisibilityEstimation(motion_dim=384, joint_dim=args.hm_embed_dim).to(device)
     pose_decoder = PoseDecoder(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
     print("Models initialized")
 
@@ -242,9 +235,6 @@ def main(args):
     pose_decoder.apply(initialize_gelu_weights)
     spatial_joint_transformer.apply(initialize_gelu_weights)
     heatmap_embedding.apply(initialize_relu_weights)
-    pjtt.apply(initialize_gelu_weights)
-    aive.apply(initialize_relu_weights)
-
     #define loss functions
     limb_loss_func = LossFuncLimb().to(device)
     mpjpe_loss_func = LossFuncMPJPE().to(device)
@@ -259,20 +249,8 @@ def main(args):
             list(encoder.parameters()) +
             list(heatmap_embedding.parameters()) +
             list(pose_decoder.parameters()) +
-            list(spatial_joint_transformer.parameters()) +
-            list(pjtt.parameters()) +
-            list(aive.parameters())
+            list(spatial_joint_transformer.parameters())
     ) if p.requires_grad and id(p) not in af_param_ids]
-
-    # DEBUG: Check if PJTT and AIVE are in optimizer
-    pjtt_params_set = {id(p) for p in pjtt.parameters()}
-    aive_params_set = {id(p) for p in aive.parameters()}
-    other_params_set = {id(p) for p in all_other_params}
-
-    pjtt_in_optimizer = len(pjtt_params_set & other_params_set)
-    aive_in_optimizer = len(aive_params_set & other_params_set)
-    print(f"DEBUG: PJTT params in optimizer: {pjtt_in_optimizer}/{len(list(pjtt.parameters()))}")
-    print(f"DEBUG: AIVE params in optimizer: {aive_in_optimizer}/{len(list(aive.parameters()))}")
 
     # Collect all trainable params for gradient clipping
     all_trainable_params = all_other_params + af_unfrozen_params
@@ -281,16 +259,6 @@ def main(args):
         {'params': all_other_params, 'lr': args.learning_rate},
         {'params': af_unfrozen_params, 'lr': args.learning_rate * 0.1}
     ], weight_decay=args.weight_decay)
-
-    # DEBUG: Verify PJTT and AIVE are in optimizer
-    opt_param_ids = set()
-    for param_group in optimizer.param_groups:
-        opt_param_ids.update(id(p) for p in param_group['params'])
-
-    pjtt_in_opt = sum(1 for p in pjtt.parameters() if id(p) in opt_param_ids)
-    aive_in_opt = sum(1 for p in aive.parameters() if id(p) in opt_param_ids)
-    print(f"DEBUG: PJTT in optimizer: {pjtt_in_opt}/{sum(1 for _ in pjtt.parameters())} params")
-    print(f"DEBUG: AIVE in optimizer: {aive_in_opt}/{sum(1 for _ in aive.parameters())} params")
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
@@ -311,8 +279,6 @@ def main(args):
         pose_decoder.train()
         heatmap_embedding.train()
         spatial_joint_transformer.train()
-        pjtt.train()
-        aive.train()
         # Initialize training loss accumulators
         train_mpjpe_losses = []
         train_cos_losses = []
@@ -344,24 +310,17 @@ def main(args):
             # (these are lightweight — autocast savings are negligible but float16 kills their gradients)
             motion_features = motion_features.float()
 
-            # Main spatial path: conv encoder → rich 128-dim features
+            # Spatial path: conv encoder → rich 128-dim features
             heatmap_features = heatmap_embedding(heatmaps)              # (B,T,J,128)
-            # Side path: lightweight stats for AIVE gate (no learnable params)
-            spatial_stats = spatial_stats_extractor(heatmaps)  # (B,T,J,8)
-
             spatial_joint_features = spatial_joint_transformer(heatmap_features)  # (B,T,J,128)
-            traj_tokens = pjtt(motion_features)                     # (B, T, J, 384)
-            gated_features = aive(spatial_joint_features, spatial_stats, traj_tokens)  # (B,T,J,128)
 
             if i == 0:
                 print(f"DEBUG: heatmap_features shape={heatmap_features.shape}, dtype={heatmap_features.dtype}")
-                print(f"DEBUG: spatial_stats shape={spatial_stats.shape}")
-                print(f"DEBUG: traj_tokens shape={traj_tokens.shape}")
-                print(f"DEBUG: gated_features shape={gated_features.shape}")
+                print(f"DEBUG: spatial_joint_features shape={spatial_joint_features.shape}")
 
-            # Only pose decoder needs autocast (it's the largest trainable module)
+            # Pose decoder fuses spatial + temporal features directly
             with autocast(device_type='cuda'):
-                pose_logits = pose_decoder(gated_features, motion_features)
+                pose_logits = pose_decoder(spatial_joint_features, motion_features)
                 # Reshape to pose format and convert to FP32 for loss computation
                 final = pose_logits.view(B, T, num_joints, 3).float()  # Convert to FP32
 
@@ -393,19 +352,6 @@ def main(args):
             optimizer.zero_grad()
             scaler.scale(final_loss).backward()
 
-            # DEBUG: Check if PJTT and AIVE got gradients
-            if i % args.log_step == 0:
-                pjtt_grads = [(name, p.grad.abs().max().item() if p.grad is not None else 0.0) for name, p in pjtt.named_parameters() if p.requires_grad]
-                aive_grads = [(name, p.grad.abs().max().item() if p.grad is not None else 0.0) for name, p in aive.named_parameters() if p.requires_grad]
-                pjtt_nonzero = sum(1 for _, v in pjtt_grads if v > 0)
-                aive_nonzero = sum(1 for _, v in aive_grads if v > 0)
-                print(f"DEBUG: PJTT {pjtt_nonzero}/{len(pjtt_grads)} params have non-zero grads")
-                if pjtt_grads:
-                    print(f"  → {', '.join(f'{n}:{v:.2e}' for n, v in pjtt_grads[:3])}")
-                print(f"DEBUG: AIVE {aive_nonzero}/{len(aive_grads)} params have non-zero grads")
-                if aive_grads:
-                    print(f"  → {', '.join(f'{n}:{v:.2e}' for n, v in aive_grads[:3])}")
-
             # Gradient clipping with scaler
             scaler.unscale_(optimizer)
             total_norm = torch.nn.utils.clip_grad_norm_(all_trainable_params, args.clip_value)
@@ -416,8 +362,6 @@ def main(args):
                 print(f'Decoder grad norm: {get_grad_norm(pose_decoder, "Decoder"):.6f}')
                 print(f'Heatmap grad norm: {get_grad_norm(heatmap_embedding, "Heatmap"):.6f}')
                 print(f'Spatial grad norm: {get_grad_norm(spatial_joint_transformer, "Spatial"):.6f}')
-                print(f'PJTT grad norm: {get_grad_norm(pjtt, "PJTT"):.2e}')
-                print(f'AIVE grad norm: {get_grad_norm(aive, "AIVE"):.2e}')
                 
                 # Monitor learning rate
                 current_lr = optimizer.param_groups[0]['lr']
@@ -455,10 +399,6 @@ def main(args):
                        os.path.join(model_dir, 'heatmap_embedding-best.ckpt'))
             torch.save(spatial_joint_transformer.state_dict(),
                        os.path.join(model_dir, 'spatial_transformer-best.ckpt'))
-            torch.save(pjtt.state_dict(),
-                       os.path.join(model_dir, 'pjtt-best.ckpt'))
-            torch.save(aive.state_dict(),
-                       os.path.join(model_dir, 'aive-best.ckpt'))
             print(f"Saved best checkpoints to {model_dir}")
 
         # Save periodic checkpoints
@@ -472,10 +412,6 @@ def main(args):
                        os.path.join(model_dir, f'heatmap_embedding-{epoch + 1:03d}.ckpt'))
             torch.save(spatial_joint_transformer.state_dict(),
                        os.path.join(model_dir, f'spatial_transformer-{epoch + 1:03d}.ckpt'))
-            torch.save(pjtt.state_dict(),
-                       os.path.join(model_dir, f'pjtt-{epoch + 1:03d}.ckpt'))
-            torch.save(aive.state_dict(),
-                       os.path.join(model_dir, f'aive-{epoch + 1:03d}.ckpt'))
             print(f"Saved periodic checkpoints for epoch {epoch + 1} to {model_dir}")
 
         # Print epoch summary
@@ -503,8 +439,6 @@ def main(args):
     print(f"  • encoder-best.ckpt")
     print(f"  • heatmap_embedding-best.ckpt")
     print(f"  • spatial_transformer-best.ckpt")
-    print(f"  • pjtt-best.ckpt")
-    print(f"  • aive-best.ckpt")
 
 
 
@@ -513,7 +447,7 @@ if __name__ == '__main__':
     parser.add_argument('--config_path', type=str, default='actionformer/config/ego4D_egovlp.yaml',
                         help='path to the config file')
     parser.add_argument('--model_path', type=str, required=True, help='path for saving trained models')
-    parser.add_argument('--annotation_path', type=str, required=True, help='path for annotation wrapper')
+    # parser.add_argument('--annotation_path', type=str, required=True, help='path for annotation wrapper')
     parser.add_argument('--heatmap_trained_path', type=str, required=True, help='path for trained 2D heatmap')
     parser.add_argument('--heatmap_backbone', type=str, default='convnext_tiny',
                         choices=['convnext_tiny', 'resnet18', 'resnet34', 'resnet50', 'resnet101'],

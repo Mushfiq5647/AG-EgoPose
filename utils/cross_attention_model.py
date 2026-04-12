@@ -189,7 +189,7 @@ class SpatialJointTransformer(nn.Module):
         
         # Layer normalization
         self.layer_norm = nn.LayerNorm(feature_dim)
-        
+
     def forward(self, joint_features):
         """
         Args:
@@ -204,13 +204,13 @@ class SpatialJointTransformer(nn.Module):
 
         joint_input = joint_features.view(B*T, J, feature_dim)
         enhanced_joints = self.transformer(joint_input)  # (B*T, J, feature_dim)
-        
-        # Layer normalization
 
-        
+        # Layer normalization on output
+        enhanced_joints = self.layer_norm(enhanced_joints)
+
         # Reshape back: (B, T, J, feature_dim)
         enhanced_joints = enhanced_joints.view(B, T, J, feature_dim)
-        
+
         return enhanced_joints
 
 
@@ -322,62 +322,120 @@ class ActionInformedVisibilityEstimation(nn.Module):
 
 
 class PoseDecoder(nn.Module):
-    """Transformer decoder with joint queries for 3D pose prediction"""
+    """Transformer decoder with Motion-Conditioned Joint Queries (MCJQ)
+    and Spatial-Temporal Cross-Attention Fusion for 3D pose prediction.
 
-    def __init__(self, joint_dim=128, motion_dim = 384, num_heads=4, num_layers=3, hidden=128):
+    Two key mechanisms:
+
+    1. **Spatial-Temporal Cross-Attention Fusion**: Instead of tiling a
+       global motion vector identically to all joints, each joint's spatial
+       features independently cross-attend to the full temporal motion
+       sequence. The wrist attends to reach-related motion dynamics while
+       the ankle attends to gait — learned, not hard-coded.
+
+    2. **Motion-Conditioned Joint Queries (MCJQ)**: Standard DETR-style
+       decoders use static learnable queries. Here, queries are modulated
+       by the current frame's motion context via factored conditioning:
+       q_{t,j} = q_j + motion_proj(m_t) * gate_j. During reaching, the
+       wrist query is amplified; during walking, the ankle query shifts.
+    """
+
+    def __init__(self, joint_dim=128, motion_dim=384, num_joints=15,
+                 num_heads=4, num_layers=3):
         super().__init__()
+        self.num_joints = num_joints
 
-        # Joint queries: learnable embeddings for each joint
-        self.joint_queries = nn.Parameter(torch.randn(15, joint_dim))
+        # ── Motion-Conditioned Joint Queries (MCJQ) ──────────────────
+        # Static base queries (one per joint)
+        self.joint_queries = nn.Parameter(torch.randn(num_joints, joint_dim))
         nn.init.normal_(self.joint_queries, std=0.02)
-        self.motion_proj = nn.Linear(motion_dim, joint_dim)
-        # Project concatenated memory back to joint_dim
-        self.memory_proj = nn.Sequential(
-            nn.Linear(joint_dim*2, joint_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(joint_dim, joint_dim)
+        # Shared motion projection to query space
+        self.query_motion_proj = nn.Sequential(
+            nn.Linear(motion_dim, joint_dim),
+            nn.GELU(),
         )
+        # Per-joint modulation gates: each joint selects which dimensions
+        # of the motion context are relevant for its query
+        self.joint_modulation = nn.Parameter(torch.randn(num_joints, joint_dim))
+        nn.init.normal_(self.joint_modulation, std=0.02)
+        self.query_norm = nn.LayerNorm(joint_dim)
 
-        # Transformer decoder
+        # ── Spatial-Temporal Cross-Attention Fusion ───────────────────
+        # Project motion features to joint_dim for cross-attention keys/values
+        self.motion_kv_proj = nn.Linear(motion_dim, joint_dim)
+        # Per-joint cross-attention: spatial queries attend to motion keys
+        self.cross_attn = nn.MultiheadAttention(
+            joint_dim, num_heads=num_heads, batch_first=True,
+        )
+        self.cross_norm = nn.LayerNorm(joint_dim)
+
+        # ── Transformer Decoder ──────────────────────────────────────
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=joint_dim,
             nhead=num_heads,
             dim_feedforward=joint_dim * 4,
-            batch_first=True
+            batch_first=True,
+            activation='gelu',
         )
         self.decoder = nn.TransformerDecoder(decoder_layer, num_layers)
 
+        # ── Regression Head ──────────────────────────────────────────
         self.pose_head = nn.Sequential(
-            nn.Linear(joint_dim, hidden),
-            nn.LeakyReLU(negative_slope=0.1),
+            nn.Linear(joint_dim, joint_dim),
+            nn.GELU(),
             nn.Dropout(0.1),
-            nn.Linear(hidden, hidden // 2),
-            nn.LeakyReLU(negative_slope=0.1),
-            nn.Dropout(0.1),
-            nn.Linear(hidden // 2, 3)  # Each joint → (x, y, z)
+            nn.Linear(joint_dim, 3),  # Each joint → (x, y, z)
         )
 
     def forward(self, spatial_joint_features, motion_features):
+        """
+        Args:
+            spatial_joint_features: (B, T, J, joint_dim) — from SpatialJointTransformer
+            motion_features:        (B, T, motion_dim)   — from ActionFormer encoder
+        Returns:
+            poses_3d: (B, T, J, 3)
+        """
         B, T, J, D = spatial_joint_features.shape
 
-        # Joint queries attend to spatial features
-        spatial_joint_features = spatial_joint_features.view(B * T, J, D)
-        motion_features = self.motion_proj(motion_features)
-        motion_tiled = motion_features.unsqueeze(2).expand(-1, -1, J, -1)  # (B,T,J,384)
-        motion_tiled = motion_tiled.view(B * T, J, -1)
-        # print("Motion tiled:", motion_tiled.shape)
-        # print("Spatial tiled:", spatial_joint_features.shape)
-        memory = torch.cat([spatial_joint_features,motion_tiled], dim=-1)
-        # print("Memory shape", memory.shape)
-        # Project memory back to joint_dim for transformer decoder
-        memory = self.memory_proj(memory)  # (B*T, J, joint_dim)
-        # # motion_memory = self.memory_proj(motion_tiled)  # (B*T, J, joint_dim)
-        # # print("Motion memory tiled:", motion_memory.shape)
-        queries = self.joint_queries.expand(B * T, 15, -1)
+        # ── 1. Spatial-Temporal Cross-Attention Fusion ────────────────
+        # Reshape so each joint independently attends across time:
+        #   queries:     (B*J, T, D) — one temporal sequence per joint
+        #   keys/values: (B*J, T, D) — motion sequence repeated per joint
+        spatial_per_joint = (spatial_joint_features
+                            .permute(0, 2, 1, 3)        # (B, J, T, D)
+                            .reshape(B * J, T, D))
+        motion_kv = self.motion_kv_proj(motion_features)  # (B, T, D)
+        motion_kv = (motion_kv
+                     .unsqueeze(1)                       # (B, 1, T, D)
+                     .expand(-1, J, -1, -1)              # (B, J, T, D)
+                     .reshape(B * J, T, D))
+
+        fused, _ = self.cross_attn(spatial_per_joint, motion_kv, motion_kv)
+        fused = self.cross_norm(fused + spatial_per_joint)  # residual connection
+
+        # Reshape back to (B*T, J, D) for the decoder
+        memory = (fused
+                  .view(B, J, T, D)
+                  .permute(0, 2, 1, 3)                   # (B, T, J, D)
+                  .reshape(B * T, J, D))
+
+        # ── 2. Motion-Conditioned Joint Queries (MCJQ) ───────────────
+        # Factored conditioning: shared motion context × per-joint gates
+        motion_ctx = self.query_motion_proj(
+            motion_features.reshape(B * T, -1)           # (B*T, motion_dim)
+        ).unsqueeze(1)                                    # (B*T, 1, D)
+        modulation = self.joint_modulation.unsqueeze(0)   # (1, J, D)
+        offsets = motion_ctx * modulation                 # (B*T, J, D)
+
+        queries = self.joint_queries.unsqueeze(0) + offsets  # (B*T, J, D)
+        queries = self.query_norm(queries)
+
+        # ── 3. Decoder + Regression ──────────────────────────────────
         decoded = self.decoder(tgt=queries, memory=memory)
+        decoded = decoded + queries  # residual: decoder refines, not reconstructs
         poses_3d = self.pose_head(decoded)
 
-        return poses_3d.view(B, T, 15, 3)
+        return poses_3d.view(B, T, J, 3)
 
 
 class MotionPoseCrossAttention(nn.Module):
