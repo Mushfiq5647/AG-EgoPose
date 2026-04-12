@@ -13,7 +13,6 @@ epoch_count: 1
 experiment: False
 experiment_name: experiment
 gpu_ids: [0]
-heatmap_trained_path: utils/trained_heatmaps/bce_combined/heatmap_best.ckpt
 init_ImageNet: False
 init_type: kaiming
 isTrain: True
@@ -29,9 +28,8 @@ log_dir: log
 lr: 0.0003
 lr_decay_iters_step: 4
 lr_policy: lambda
-model: sceneego
+model: unrealego
 model_name: convnext_tiny
-model_path: utils/sceneego_seq64
 niter: 0
 niter_decay: 0
 num_heatmap: 15
@@ -44,7 +42,7 @@ project_name: project_name
 save_dir_pose: results
 save_epoch_freq: 1
 save_latest_freq: 4000
-seq_length: 64
+seq_length: 32
 stride: 16
 task_epoch: 0
 transform_epoch: 0

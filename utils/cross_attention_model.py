@@ -166,14 +166,54 @@ class SpatialStatsExtractor(nn.Module):
         return stats.view(B, T, J, self.NUM_STATS)
 
 
+class StereoFeatureFusion(nn.Module):
+    """Stereo fusion via gated concat-and-project with mean residual.
+
+    Best practice for clean stereo features:
+      - Mean baseline preserves view-invariant signal (works even if one view occluded).
+      - Concatenate-and-project preserves per-view information that mean would average away
+        (e.g. left wrist visible, right wrist occluded — mean discards this asymmetry).
+      - Sigmoid gate per (B,T,J) decides how much projected disparity-aware signal to add
+        on top of the mean.
+      - LayerNorm stabilizes downstream training.
+
+    Shared along the joint dim — same weights for all 15 joints (cheap, generalizes).
+    Operates on per-joint features of shape (B, T, J, dim).
+    """
+
+    def __init__(self, dim):
+        super().__init__()
+        self.proj = nn.Sequential(
+            nn.Linear(dim * 2, dim),
+            nn.LayerNorm(dim),
+            nn.GELU(),
+            nn.Linear(dim, dim),
+        )
+        self.gate = nn.Linear(dim * 2, 1)
+        self.norm = nn.LayerNorm(dim)
+
+    def forward(self, f_left, f_right):
+        """
+        Args:
+            f_left, f_right: (B, T, J, dim)
+        Returns:
+            fused: (B, T, J, dim)
+        """
+        cat = torch.cat([f_left, f_right], dim=-1)
+        mean_f = 0.5 * (f_left + f_right)
+        residual = self.proj(cat)
+        g = torch.sigmoid(self.gate(cat))
+        return self.norm(mean_f + g * residual)
+
+
 class SpatialJointTransformer(nn.Module):
     """Spatial transformer for modeling joint relationships"""
     
-    def __init__(self, feature_dim=128, num_heads=4, num_layers=3, dropout=0.1):
+    def __init__(self, feature_dim=128, num_heads=4, num_layers=3, dropout=0.1, num_joints=15):
         super(SpatialJointTransformer, self).__init__()
         self.feature_dim = feature_dim
 
-        self.joint_id = JointIDEncoding(num_joints=15, dim=feature_dim, p_drop=0.1)
+        self.joint_id = JointIDEncoding(num_joints=num_joints, dim=feature_dim, p_drop=0.1)
         
         # Transformer encoder layer
         encoder_layer = nn.TransformerEncoderLayer(
@@ -324,11 +364,12 @@ class ActionInformedVisibilityEstimation(nn.Module):
 class PoseDecoder(nn.Module):
     """Transformer decoder with joint queries for 3D pose prediction"""
 
-    def __init__(self, joint_dim=128, motion_dim = 384, num_heads=4, num_layers=3, hidden=128):
+    def __init__(self, joint_dim=128, motion_dim = 384, num_heads=4, num_layers=3, hidden=128, num_joints=15):
         super().__init__()
+        self.num_joints = num_joints
 
         # Joint queries: learnable embeddings for each joint
-        self.joint_queries = nn.Parameter(torch.randn(15, joint_dim))
+        self.joint_queries = nn.Parameter(torch.randn(num_joints, joint_dim))
         nn.init.normal_(self.joint_queries, std=0.02)
         self.motion_proj = nn.Linear(motion_dim, joint_dim)
         # Project concatenated memory back to joint_dim
@@ -373,11 +414,11 @@ class PoseDecoder(nn.Module):
         memory = self.memory_proj(memory)  # (B*T, J, joint_dim)
         # # motion_memory = self.memory_proj(motion_tiled)  # (B*T, J, joint_dim)
         # # print("Motion memory tiled:", motion_memory.shape)
-        queries = self.joint_queries.expand(B * T, 15, -1)
+        queries = self.joint_queries.expand(B * T, self.num_joints, -1)
         decoded = self.decoder(tgt=queries, memory=memory)
         poses_3d = self.pose_head(decoded)
 
-        return poses_3d.view(B, T, 15, 3)
+        return poses_3d.view(B, T, self.num_joints, 3)
 
 
 class MotionPoseCrossAttention(nn.Module):

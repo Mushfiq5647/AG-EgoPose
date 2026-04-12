@@ -23,7 +23,7 @@ class BaseOptions():
                                 help='which epoch to load')
         self.parser.add_argument('--gpu_ids', type=str, default='0',
                                 help='gpu ids: e.g. 0, 1, 2 use -1 for CPU')   
-        self.parser.add_argument('--model', type=str, default='sceneego',
+        self.parser.add_argument('--model', type=str, default='unrealego',
                                 help='choose which model to use, [egoglass] | [unrealego_heatmap_shared] | [unrealego_autoencoder]')
         self.parser.add_argument('--init_ImageNet', action='store_true', 
                                 help='If true, use ImageNet initialization for the backbone')
@@ -47,9 +47,9 @@ class BaseOptions():
                                 help='# threads for loading data')
         self.parser.add_argument('--batch_size', type=int, default=8,
                                 help='input batch size')
-        self.parser.add_argument('--seq_length', type=int, default=64,
+        self.parser.add_argument('--seq_length', type=int, default=32,
                                 help='sliding window size (number of frames per sequence)')
-        self.parser.add_argument('--stride', type=int, default=32,
+        self.parser.add_argument('--stride', type=int, default=16,
                                 help='sliding window stride for dataset construction')
         self.parser.add_argument('--load_size_rgb', nargs='+', type=int, default=[256, 256], 
                                 help='scale images to this size')

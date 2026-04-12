@@ -79,7 +79,9 @@ def dataloader_full(opt, transform, mode='train', id=None):
     elif opt.model == "sceneego":
         datasets = SceneEgoWindowDataset(opt, transform, mode)
     elif opt.model == "unrealego":
-        datasets = UnrealEgoWindowDataset(opt, transform, mode)
+        datasets = UnrealEgoWindowDataset(opt, transform, mode,
+                                          window_size=getattr(opt, 'seq_length', 32),
+                                          stride=getattr(opt, 'stride', 16))
     elif opt.model == "egoglobal":
         datasets = EgoGlobalTestDataset(opt, transform, mode)
     elif opt.model == "egogta":
@@ -457,10 +459,10 @@ class EgoGTAWindowDataset(torch.utils.data.Dataset):
 
 
 class UnrealEgoWindowDataset(torch.utils.data.Dataset):
-    def __init__(self, opt, transform, mode, window_size=64, stride=16):
+    def __init__(self, opt, transform, mode, window_size=32, stride=16):
         self.transform = transform
-        self.window_size = window_size
-        self.stride = stride
+        self.window_size = window_size if window_size is not None else getattr(opt, 'seq_length', 32)
+        self.stride = stride if stride is not None else getattr(opt, 'stride', 16)
 
         # Read sequence directories
         sequnce_directory = f'{mode}_unrealego.txt'
@@ -481,8 +483,14 @@ class UnrealEgoWindowDataset(torch.utils.data.Dataset):
 
             self.sequences.append(npy_paths)
             L = len(npy_paths)
-            for start in range(0, L - window_size + 1, stride):
-                self.index.append((seq_idx, start))
+            if L == 0:
+                continue
+            if L < self.window_size:
+                # Short sequence: single window, will be padded in __getitem__
+                self.index.append((seq_idx, 0))
+            else:
+                for start in range(0, L - self.window_size + 1, self.stride):
+                    self.index.append((seq_idx, start))
 
     def __len__(self):
         return len(self.index)
@@ -533,9 +541,25 @@ class UnrealEgoWindowDataset(torch.utils.data.Dataset):
 
         img_left_batch = torch.stack(imgs_left, dim=0)  # (T,3,H,W)
         img_right_batch = torch.stack(imgs_right, dim=0)  # (T,3,H,W)
-        hm_left_batch   = torch.stack(hms_left,  dim=0)      # (T,J,H,W)
-        hm_right_batch   = torch.stack(hms_right,  dim=0)      # (T,J,H,W)
+        hm_left_batch = torch.stack(hms_left, dim=0)  # (T,J,H,W)
+        hm_right_batch = torch.stack(hms_right, dim=0)  # (T,J,H,W)
         pose_batch = torch.stack(poses, dim=0)  # (T,J,3)
+
+        # UnrealEgo can contain short sequences; pad by repeating the last frame
+        # so the heatmap trainer and downstream models always receive fixed windows.
+        current_len = img_left_batch.size(0)
+        if current_len < self.window_size:
+            pad_amt = self.window_size - current_len
+            img_left_pad = img_left_batch[-1:].expand(pad_amt, *img_left_batch.shape[1:])
+            img_right_pad = img_right_batch[-1:].expand(pad_amt, *img_right_batch.shape[1:])
+            hm_left_pad = hm_left_batch[-1:].expand(pad_amt, *hm_left_batch.shape[1:])
+            hm_right_pad = hm_right_batch[-1:].expand(pad_amt, *hm_right_batch.shape[1:])
+            pose_pad = pose_batch[-1:].expand(pad_amt, *pose_batch.shape[1:])
+            img_left_batch = torch.cat([img_left_batch, img_left_pad], dim=0)
+            img_right_batch = torch.cat([img_right_batch, img_right_pad], dim=0)
+            hm_left_batch = torch.cat([hm_left_batch, hm_left_pad], dim=0)
+            hm_right_batch = torch.cat([hm_right_batch, hm_right_pad], dim=0)
+            pose_batch = torch.cat([pose_batch, pose_pad], dim=0)
 
         return {
             'input_rgb_left': img_left_batch,

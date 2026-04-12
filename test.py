@@ -14,6 +14,7 @@ from utils.cross_attention_model import SpatialJointTransformer
 from utils.cross_attention_model import PerJointTrajectoryTokens
 from utils.cross_attention_model import ActionInformedVisibilityEstimation
 from utils.cross_attention_model import PoseDecoder
+from utils.cross_attention_model import StereoFeatureFusion
 from utils.loss import LossFuncMPJPE
 from heatmaps.network_heatmap import HeatMap_Network
 from utils.model import FeatureEncoder
@@ -32,8 +33,6 @@ if torch.cuda.is_available():
     print("Current CUDA device index:", torch.cuda.current_device())
     print("Device name:", torch.cuda.get_device_name(torch.cuda.current_device()))
 
-# Number of joints and coordinates per joint
-num_joints = 15
 # coords_per_joint = 3
 # # Device configuration
 #
@@ -86,6 +85,14 @@ def main(args):
     ])
     
     opt = TestOptions().parse()
+    if opt.model == 'unrealego':
+        num_heatmap_joints = 15
+        num_pose_joints = 16
+    else:
+        num_heatmap_joints = opt.num_heatmap
+        num_pose_joints = opt.num_heatmap
+    opt.num_heatmap = num_heatmap_joints
+    print(f"Using {num_heatmap_joints} heatmap joints and {num_pose_joints} pose joints for model={opt.model}")
     test_loader = dataloader_full(opt, transform, mode='test')
     print("Test Data Loading complete", len(test_loader))
     print("Total test dataset", len(test_loader.dataset))
@@ -99,11 +106,13 @@ def main(args):
     heatmap_embedding = HeatmapToJointFeatures(heatmap_size=64, feature_dim=128, method='conv_pool').to(device)
     spatial_stats_extractor = SpatialStatsExtractor(heatmap_size=64).to(device)
     encoder = FeatureEncoder(actionformer_feature_extractor).to(device)
-    spatial_joint_transformer = SpatialJointTransformer(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
-    pjtt = PerJointTrajectoryTokens(num_joints=15, motion_dim=384, num_heads=4).to(device)
+    spatial_joint_transformer = SpatialJointTransformer(
+        args.hm_embed_dim, num_heads=4, num_layers=3, num_joints=num_heatmap_joints
+    ).to(device)
+    stereo_fusion = StereoFeatureFusion(dim=args.hm_embed_dim).to(device)
+    pjtt = PerJointTrajectoryTokens(num_joints=num_heatmap_joints, motion_dim=384, num_heads=4).to(device)
     aive = ActionInformedVisibilityEstimation(motion_dim=384, joint_dim=args.hm_embed_dim).to(device)
-    # pose_decoder = PoseDecoder(motion_dim=384, joint_dim=128, out_dim=3).to(device)
-    pose_decoder = PoseDecoder(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
+    pose_decoder = PoseDecoder(args.hm_embed_dim, num_heads=4, num_layers=3, num_joints=num_pose_joints).to(device)
     # Load pre-trained 2D heatmap network
     if os.path.exists(args.heatmap_trained_path):
         print(f"Loading pre-trained 2D heatmap network from {args.heatmap_trained_path}")
@@ -129,6 +138,9 @@ def main(args):
     print(f"Loading spatial transformer from {args.spatial_transformer_path}")
     spatial_joint_transformer.load_state_dict(torch.load(args.spatial_transformer_path, map_location=device))
 
+    print(f"Loading stereo fusion from {args.stereo_fusion_path}")
+    stereo_fusion.load_state_dict(torch.load(args.stereo_fusion_path, map_location=device))
+
     print(f"Loading PJTT from {args.pjtt_path}")
     pjtt.load_state_dict(torch.load(args.pjtt_path, map_location=device))
 
@@ -142,6 +154,7 @@ def main(args):
     heatmap_embedding.eval()
     spatial_stats_extractor.eval()
     spatial_joint_transformer.eval()
+    stereo_fusion.eval()
     pjtt.eval()
     aive.eval()
     
@@ -160,23 +173,44 @@ def main(args):
     with torch.no_grad():
         for i, (batch) in enumerate(test_loader):
             print("Printing iteration number:", i)
-            # Instead of: for i, (images, homography, gt_egoposes, lengths) in enumerate(data_loader)
-            images = batch['input_rgb'].to(device)  # Tensor
-            sequence_folders = batch.get('sequence_folder')
-            B, T, _, H_img, W_img = images.shape
+            if opt.model == 'unrealego':
+                images_left = batch['input_rgb_left'].to(device)
+                images_right = batch['input_rgb_right'].to(device)
+                sequence_folders = batch.get('sequence_folder')
+                B, T, _, H_img, W_img = images_left.shape
+                gt_egoposes = batch['gt_local_pose'].to(device) / 100.0
+            else:
+                images = batch['input_rgb'].to(device)
+                sequence_folders = batch.get('sequence_folder')
+                B, T, _, H_img, W_img = images.shape
+                gt_egoposes = batch['gt_local_pose'].to(device)
             H_hm, W_hm = 64, 64
-            gt_egoposes = batch['gt_local_pose'].to(device)
-            # Process ALL images at once (more efficient)
-            with torch.no_grad():
-                all_images_flat = images.view(-1, 3, H_img, W_img)  # [B*T, 3, H, W]
+
+            if opt.model == 'unrealego':
+                left_flat = images_left.view(-1, 3, H_img, W_img)
+                right_flat = images_right.view(-1, 3, H_img, W_img)
+                stereo_logits = net_heatmap(left_flat, right_flat)
+                stereo_probs = torch.sigmoid(stereo_logits)
+                heatmaps_left = stereo_probs[:, :num_heatmap_joints].view(B, T, num_heatmap_joints, H_hm, W_hm)
+                heatmaps_right = stereo_probs[:, num_heatmap_joints:].view(B, T, num_heatmap_joints, H_hm, W_hm)
+                motion_features = encoder(images_left, images_right).float()
+                hm_feat_left = heatmap_embedding(heatmaps_left)
+                hm_feat_right = heatmap_embedding(heatmaps_right)
+                heatmap_features = stereo_fusion(hm_feat_left, hm_feat_right)
+                spatial_stats = 0.5 * (
+                    spatial_stats_extractor(heatmaps_left) +
+                    spatial_stats_extractor(heatmaps_right)
+                )
+            else:
+                all_images_flat = images.view(-1, 3, H_img, W_img)
                 print("Image shape", all_images_flat.shape)
-                all_heatmaps = net_heatmap(all_images_flat)  # [B*T, J, H_hm, W_hm]
-                all_heatmaps = torch.sigmoid(all_heatmaps)  # Convert logits to 0-1 range for BCE with logits model
-                heatmaps = all_heatmaps.view(B, T, 15, H_hm, W_hm)  # [B,
-                # T, 15, H_hm, W_hm]
-            motion_features = encoder(images)
-            heatmap_features = heatmap_embedding(heatmaps)
-            spatial_stats = spatial_stats_extractor(heatmaps)
+                stereo_logits = net_heatmap(all_images_flat, all_images_flat)
+                all_heatmaps = torch.sigmoid(stereo_logits[:, :num_heatmap_joints])
+                heatmaps = all_heatmaps.view(B, T, num_heatmap_joints, H_hm, W_hm)
+                motion_features = encoder(images).float()
+                heatmap_features = heatmap_embedding(heatmaps)
+                spatial_stats = spatial_stats_extractor(heatmaps)
+
             spatial_joint_features = spatial_joint_transformer(heatmap_features)
             traj_tokens = pjtt(motion_features)
             gated_features = aive(spatial_joint_features, spatial_stats, traj_tokens)
@@ -185,11 +219,11 @@ def main(args):
             print("Passed decoder")
 
             # Reshape to pose format
-            final = pose_logits.view(B, T, num_joints, 3)
+            final = pose_logits.view(B, T, num_pose_joints, 3)
 
             # Reshape for loss computation
-            final_reshaped = final.reshape(B * T, num_joints, 3)
-            gt_reshaped = gt_egoposes.reshape(B * T, num_joints, 3)
+            final_reshaped = final.reshape(B * T, num_pose_joints, 3)
+            gt_reshaped = gt_egoposes.reshape(B * T, num_pose_joints, 3)
             sample_idx = 0
 
 
@@ -266,6 +300,7 @@ if __name__ == '__main__':
     parser.add_argument('--heatmap_trained_path', type=str, required=True, help='path for trained 2D heatmap')
     parser.add_argument('--heatmap_path', type=str, required=True, help='path for trained heatmap embedding')
     parser.add_argument('--spatial_transformer_path', type=str, required=True, help='path for trained spatial transformer')
+    parser.add_argument('--stereo_fusion_path', type=str, default=None, help='path for trained stereo fusion module')
     parser.add_argument('--pjtt_path', type=str, default=None, help='path for trained PJTT')
     parser.add_argument('--aive_path', type=str, default=None, help='path for trained AIVE')
     parser.add_argument('--heatmap_backbone', type=str, default='convnext_tiny',
@@ -297,6 +332,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     # Convenience fallback: infer pjtt/aive from the decoder checkpoint directory
     ckpt_dir = os.path.dirname(args.decoder_path)
+    if args.stereo_fusion_path is None:
+        args.stereo_fusion_path = os.path.join(ckpt_dir, 'stereo_fusion-best.ckpt')
     if args.pjtt_path is None:
         args.pjtt_path = os.path.join(ckpt_dir, 'pjtt-best.ckpt')
     if args.aive_path is None:

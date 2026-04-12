@@ -17,6 +17,19 @@ class FeatureEncoder(nn.Module):
 
         # DINOv2-ViT-S/14 outputs 384-dim, matching ActionFormer embed_dim directly
         self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
+        # Symmetric stereo fusion on global CLS features.
+        # mean captures shared scene/action context, |diff| preserves asymmetric
+        # occlusion/viewpoint cues without doubling ActionFormer input width.
+        self.stereo_fusion_proj = nn.Sequential(
+            nn.Linear(embed_size * 2, embed_size),
+            nn.GELU(),
+            nn.Linear(embed_size, embed_size),
+            nn.LayerNorm(embed_size)
+        )
+        self.stereo_fusion_gate = nn.Sequential(
+            nn.Linear(embed_size * 2, embed_size),
+            nn.Sigmoid()
+        )
         self.actionformer_model = actionformer_model
 
     def train(self, mode=True):
@@ -30,7 +43,8 @@ class FeatureEncoder(nn.Module):
         """Round down to nearest multiple of patch_size."""
         return (size // patch_size) * patch_size
 
-    def forward(self, images):
+    def _encode_view(self, images):
+        """Run DINOv2 + BN frame-by-frame on a single view. Returns (B, T, 384)."""
         feat_block = []
         images = images.transpose(0, 1)  # (T, B, 3, H, W)
         for batch in images:  # batch: (B, 3, H, W)
@@ -44,8 +58,36 @@ class FeatureEncoder(nn.Module):
                 features = self.dinov2(batch)  # (B, 384) CLS token
             features = self.bn(features)
             feat_block.append(features)
+        return torch.stack(feat_block, dim=1)  # (B, T, 384)
 
-        feat_block = torch.stack(feat_block, dim=1)  # (B, T, 384)
+    def _fuse_stereo_views(self, feat_left, feat_right):
+        """Lightweight symmetric stereo fusion on global CLS features."""
+        mean_feat = 0.5 * (feat_left + feat_right)
+        diff_feat = torch.abs(feat_left - feat_right)
+        fusion_input = torch.cat([mean_feat, diff_feat], dim=-1)
+        residual = self.stereo_fusion_proj(fusion_input)
+        gate = self.stereo_fusion_gate(fusion_input)
+        return mean_feat + gate * residual
+
+    def forward(self, images_left, images_right=None):
+        """
+        Args:
+            images_left:  (B, T, 3, H, W)
+            images_right: (B, T, 3, H, W) or None for monocular
+        Returns:
+            actionformer_features: (B, T, 384)
+
+        Stereo strategy: symmetric mean-plus-difference fusion before ActionFormer.
+        DINOv2 produces one global CLS token per view; mean keeps shared action context,
+        while |left-right| preserves asymmetric occlusion/viewpoint cues. A small gated
+        residual projector fuses both without doubling ActionFormer input width.
+        """
+        feat_left = self._encode_view(images_left)
+        if images_right is not None:
+            feat_right = self._encode_view(images_right)
+            feat_block = self._fuse_stereo_views(feat_left, feat_right)
+        else:
+            feat_block = feat_left
 
         actionformer_features = self.actionformer_model(feat_block)
         return actionformer_features
@@ -91,4 +133,3 @@ class PoseDecoder(nn.Module):
         z = z.view(B*T*J, -1)                                            # (B*T*J, 512)
         y = self.mlp(z)                                                  # (B*T*J, out_dim)
         return y.view(B, T, J, -1)                                       # (B,T,J,out_dim)
-

@@ -16,6 +16,7 @@ from utils.cross_attention_model import SpatialJointTransformer
 from utils.cross_attention_model import PerJointTrajectoryTokens
 from utils.cross_attention_model import ActionInformedVisibilityEstimation
 from utils.cross_attention_model import PoseDecoder
+from utils.cross_attention_model import StereoFeatureFusion
 from heatmaps.network_heatmap import HeatMap_Network
 from utils.loss import LossFuncLimb, LossFuncMPJPE, LossFuncCosSim  # Add bone length loss import
 from utils.model import  FeatureEncoder
@@ -33,8 +34,7 @@ if torch.cuda.is_available():
     print("Current CUDA device index:", torch.cuda.current_device())
     print("Device name:", torch.cuda.get_device_name(torch.cuda.current_device()))
 
-# # Number of joints and coordinates per joint
-num_joints = 15
+# # Number of coordinates per joint
 coords_per_joint = 3
 #
 # # Define bidirectional connections for the central body part
@@ -131,6 +131,71 @@ def get_grad_norm(model, model_name=""):
     return result
 
 
+@torch.no_grad()
+def run_validation(val_loader, net_heatmap, encoder, heatmap_embedding,
+                   spatial_stats_extractor, stereo_fusion, spatial_joint_transformer,
+                   pjtt, aive, pose_decoder,
+                   mpjpe_loss_func, limb_loss_func, cos_sim_loss_func, opt,
+                   num_heatmap_joints, num_pose_joints):
+    """Run a full validation pass on the stereo pipeline. Returns dict of mean losses."""
+    encoder.eval(); heatmap_embedding.eval(); spatial_joint_transformer.eval()
+    stereo_fusion.eval(); pjtt.eval(); aive.eval(); pose_decoder.eval()
+
+    mpjpe_list, cos_list, bone_list, total_list = [], [], [], []
+    H_hm = W_hm = 64
+
+    for batch in val_loader:
+        images_left = batch['input_rgb_left'].to(device)
+        images_right = batch['input_rgb_right'].to(device)
+        gt_egoposes = batch['gt_local_pose'].to(device) / 100.0
+        B, T, _, H_img, W_img = images_left.shape
+
+        left_flat = images_left.reshape(-1, 3, H_img, W_img)
+        right_flat = images_right.reshape(-1, 3, H_img, W_img)
+        stereo_logits = net_heatmap(left_flat, right_flat)
+        stereo_probs = torch.sigmoid(stereo_logits)
+        heatmaps_left = stereo_probs[:, :num_heatmap_joints].view(B, T, num_heatmap_joints, H_hm, W_hm)
+        heatmaps_right = stereo_probs[:, num_heatmap_joints:].view(B, T, num_heatmap_joints, H_hm, W_hm)
+
+        with autocast(device_type='cuda'):
+            motion_features = encoder(images_left, images_right)
+        motion_features = motion_features.float()
+
+        hm_feat_left = heatmap_embedding(heatmaps_left)
+        hm_feat_right = heatmap_embedding(heatmaps_right)
+        heatmap_features = stereo_fusion(hm_feat_left, hm_feat_right)
+        spatial_stats = 0.5 * (spatial_stats_extractor(heatmaps_left)
+                               + spatial_stats_extractor(heatmaps_right))
+
+        spatial_joint_features = spatial_joint_transformer(heatmap_features)
+        traj_tokens = pjtt(motion_features)
+        gated_features = aive(spatial_joint_features, spatial_stats, traj_tokens)
+
+        pose_logits = pose_decoder(gated_features, motion_features)
+        final = pose_logits.view(B, T, num_pose_joints, 3).float()
+        final_reshaped = final.reshape(B * T, num_pose_joints, 3)
+        gt_reshaped = gt_egoposes.reshape(B * T, num_pose_joints, 3)
+
+        mpjpe_loss = mpjpe_loss_func(final_reshaped, gt_reshaped)
+        bone_length_loss = limb_loss_func(final_reshaped, gt_reshaped)
+        cos_loss = cos_sim_loss_func(final_reshaped, gt_reshaped)
+        total = (opt.lambda_mpjpe * mpjpe_loss
+                 + opt.lambda_cos_sim * cos_loss
+                 + opt.lambda_bone_length * bone_length_loss)
+
+        mpjpe_list.append(mpjpe_loss.item())
+        cos_list.append(cos_loss.item())
+        bone_list.append(bone_length_loss.item())
+        total_list.append(total.item())
+
+    return {
+        'mpjpe': float(np.mean(mpjpe_list)),
+        'cos':   float(np.mean(cos_list)),
+        'bone':  float(np.mean(bone_list)),
+        'total': float(np.mean(total_list)),
+    }
+
+
 def update_learning_rate(self):
     old_lr = self.optimizers[0].param_groups[0]['lr']
     for scheduler in self.schedulers:
@@ -147,7 +212,8 @@ def main(args):
     # Create loss log file
     loss_log_path = 'loss_log_egopw_bce.txt'
     with open(loss_log_path, 'w') as f:
-        f.write("Epoch, Train_MPJPE, Train_Cos, Train_Bone, Train_Total, Best_Total \n")
+        f.write("Epoch, Train_MPJPE, Train_Cos, Train_Bone, Train_Total, "
+                "Val_MPJPE, Val_Cos, Val_Bone, Val_Total, Best_Total \n")
     
     # Track best model
     best_loss = float('inf')
@@ -163,9 +229,23 @@ def main(args):
     # with open(args.annotation_path, 'rb') as f:
     #     annotation = pickle.load(f)
     opt = TrainOptions().parse()
+    if opt.model == 'unrealego':
+        num_heatmap_joints = 15
+        num_pose_joints = 16
+    else:
+        num_heatmap_joints = opt.num_heatmap
+        num_pose_joints = opt.num_heatmap
+    opt.num_heatmap = num_heatmap_joints
+    print(f"Using {num_heatmap_joints} heatmap joints and {num_pose_joints} pose joints for model={opt.model}")
     data_loader = dataloader_full(opt, transform, mode='train')
     print("Data Loading complete", len(data_loader))
     print("Total dataset", len(data_loader.dataset))
+    try:
+        val_loader = dataloader_full(opt, transform, mode='validation')
+        print(f"Validation loader: {len(val_loader)} batches, {len(val_loader.dataset)} samples")
+    except (FileNotFoundError, OSError) as e:
+        print(f"⚠️  No validation set available ({e}). Will track best by train loss.")
+        val_loader = None
     net_heatmap = HeatMap_Network(opt, model_name=args.heatmap_backbone).to(device)
     
     # Load pre-trained 2D heatmap network
@@ -179,10 +259,12 @@ def main(args):
         print("2D heatmap network loaded and frozen")
         print(f"Using heatmap model: {args.heatmap_trained_path}")
         
-        # Debug: Test heatmap output range with a dummy input
+        # Debug: Test heatmap output range with dummy stereo inputs
         with torch.no_grad():
-            dummy_input = torch.randn(1, 3, 256,256).to(device)
-            dummy_output = net_heatmap(dummy_input)
+            dummy_left = torch.randn(1, 3, 256, 256).to(device)
+            dummy_right = torch.randn(1, 3, 256, 256).to(device)
+            dummy_output = net_heatmap(dummy_left, dummy_right)
+            print(f"Heatmap model output shape: {tuple(dummy_output.shape)}  (expects num_heatmap*2 channels)")
             print(f"Heatmap model output range: {dummy_output.min().item():.4f} to {dummy_output.max().item():.4f}")
             print(f"Heatmap model output mean/std: {dummy_output.mean().item():.4f}/{dummy_output.std().item():.4f}")
     else:
@@ -194,10 +276,14 @@ def main(args):
     # Side path: lightweight stats (8-dim) for AIVE visibility gate only (no learnable params)
     spatial_stats_extractor = SpatialStatsExtractor(heatmap_size=64).to(device)
     encoder = FeatureEncoder(actionformer_feature_extractor).to(device)
-    spatial_joint_transformer = SpatialJointTransformer(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
-    pjtt = PerJointTrajectoryTokens(num_joints=15, motion_dim=384, num_heads=4).to(device)
+    spatial_joint_transformer = SpatialJointTransformer(
+        args.hm_embed_dim, num_heads=4, num_layers=3, num_joints=num_heatmap_joints
+    ).to(device)
+    # Stereo fusion: gated concat+project over mean baseline for per-joint features
+    stereo_fusion = StereoFeatureFusion(dim=args.hm_embed_dim).to(device)
+    pjtt = PerJointTrajectoryTokens(num_joints=num_heatmap_joints, motion_dim=384, num_heads=4).to(device)
     aive = ActionInformedVisibilityEstimation(motion_dim=384, joint_dim=args.hm_embed_dim).to(device)
-    pose_decoder = PoseDecoder(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
+    pose_decoder = PoseDecoder(args.hm_embed_dim, num_heads=4, num_layers=3, num_joints=num_pose_joints).to(device)
     print("Models initialized")
 
     # --- ActionFormer selective unfreeze ---
@@ -244,11 +330,12 @@ def main(args):
     heatmap_embedding.apply(initialize_relu_weights)
     pjtt.apply(initialize_gelu_weights)
     aive.apply(initialize_relu_weights)
+    stereo_fusion.apply(initialize_gelu_weights)
 
     #define loss functions
-    limb_loss_func = LossFuncLimb().to(device)
+    limb_loss_func = LossFuncLimb(num_joints=num_pose_joints).to(device)
     mpjpe_loss_func = LossFuncMPJPE().to(device)
-    cos_sim_loss_func = LossFuncCosSim().to(device)
+    cos_sim_loss_func = LossFuncCosSim(num_joints=num_pose_joints).to(device)
 
     enc_params = sum(p.numel() for p in encoder.parameters() if p.requires_grad)
     print("encoder trainable params:", enc_params)
@@ -260,6 +347,7 @@ def main(args):
             list(heatmap_embedding.parameters()) +
             list(pose_decoder.parameters()) +
             list(spatial_joint_transformer.parameters()) +
+            list(stereo_fusion.parameters()) +
             list(pjtt.parameters()) +
             list(aive.parameters())
     ) if p.requires_grad and id(p) not in af_param_ids]
@@ -311,6 +399,7 @@ def main(args):
         pose_decoder.train()
         heatmap_embedding.train()
         spatial_joint_transformer.train()
+        stereo_fusion.train()
         pjtt.train()
         aive.train()
         # Initialize training loss accumulators
@@ -321,33 +410,51 @@ def main(args):
 
         for i, (batch) in enumerate(data_loader):
             print("Printing iteration number:", i)
-            # Instead of: for i, (images, homography, gt_egoposes, lengths) in enumerate(data_loader)
-            images = batch['input_rgb'].to(device)  # Tensor
-            B, T, _, H_img, W_img = images.shape
-            H_hm, W_hm = 64,64
-            gt_egoposes = batch['gt_local_pose'].to(device)
-            # Compute heatmaps from frozen net_heatmap, then detach and enable gradients
-            # This allows: net_heatmap (frozen) → heatmaps (differentiable inputs) → heatmap_embedding.encoder (trainable)
+            # Stereo inputs from UnrealEgo dataloader
+            images_left = batch['input_rgb_left'].to(device)
+            images_right = batch['input_rgb_right'].to(device)
+            B, T, _, H_img, W_img = images_left.shape
+            H_hm, W_hm = 64, 64
+            gt_egoposes = batch['gt_local_pose'].to(device) / 100.0
+
+            # Compute stereo heatmaps from frozen net_heatmap.
+            # Network does internal channel-wise stereo fusion and outputs num_heatmap*2 channels:
+            # first num_heatmap = left, last num_heatmap = right.
             with torch.no_grad():
-                all_images_flat = images.view(-1, 3, H_img, W_img)  # [B*T, 3, H, W]
-                all_heatmaps = net_heatmap(all_images_flat)  # [B*T, J, H_hm, W_hm]
-                all_heatmaps = torch.sigmoid(all_heatmaps)  # Convert logits to 0-1 range
-            # Detach from frozen net_heatmap, but enable gradients for downstream modules
-            heatmaps = all_heatmaps.detach().view(B, T, 15, H_hm, W_hm)  # [B, T, 15, H_hm, W_hm]
-            heatmaps.requires_grad_(True)  # Enable gradient computation for heatmap_embedding/spatial_transformer
-            
-            # Only encoder (heavy DINOv2 + ActionFormer) needs autocast for memory efficiency
+                left_flat = images_left.reshape(-1, 3, H_img, W_img)    # [B*T, 3, H, W]
+                right_flat = images_right.reshape(-1, 3, H_img, W_img)  # [B*T, 3, H, W]
+                stereo_logits = net_heatmap(left_flat, right_flat)      # [B*T, J*2, H_hm, W_hm]
+                stereo_probs = torch.sigmoid(stereo_logits)
+                left_hm_flat = stereo_probs[:, :num_heatmap_joints]
+                right_hm_flat = stereo_probs[:, num_heatmap_joints:]
+
+            heatmaps_left = left_hm_flat.detach().view(B, T, num_heatmap_joints, H_hm, W_hm)
+            heatmaps_right = right_hm_flat.detach().view(B, T, num_heatmap_joints, H_hm, W_hm)
+            heatmaps_left.requires_grad_(True)
+            heatmaps_right.requires_grad_(True)
+
+            # Stereo encoder (heavy DINOv2 + ActionFormer): autocast for memory.
+            # Encoder uses symmetric mean+|diff| fusion on left/right CLS features
+            # before ActionFormer, preserving cross-view disagreement cheaply.
             with autocast(device_type='cuda'):
-                motion_features = encoder(images)                       # (B, T, 384)
+                motion_features = encoder(images_left, images_right)    # (B, T, 384)
 
             # All cross-stream modules in float32 to prevent gradient underflow
             # (these are lightweight — autocast savings are negligible but float16 kills their gradients)
             motion_features = motion_features.float()
 
-            # Main spatial path: conv encoder → rich 128-dim features
-            heatmap_features = heatmap_embedding(heatmaps)              # (B,T,J,128)
-            # Side path: lightweight stats for AIVE gate (no learnable params)
-            spatial_stats = spatial_stats_extractor(heatmaps)  # (B,T,J,8)
+            # Spatial path with shared-weight per-view encoding + stereo fusion.
+            # heatmap_embedding (conv_pool) is shared across views — runs on each independently.
+            hm_feat_left = heatmap_embedding(heatmaps_left)             # (B,T,J,128)
+            hm_feat_right = heatmap_embedding(heatmaps_right)           # (B,T,J,128)
+            heatmap_features = stereo_fusion(hm_feat_left, hm_feat_right)  # (B,T,J,128)
+
+            # Stats path: average left/right uncertainty stats for AIVE gate.
+            # Symmetric mean is appropriate here — stats are interpretable scalars (peak,
+            # entropy, coords) and we want a view-invariant uncertainty estimate.
+            stats_left = spatial_stats_extractor(heatmaps_left)         # (B,T,J,8)
+            stats_right = spatial_stats_extractor(heatmaps_right)       # (B,T,J,8)
+            spatial_stats = 0.5 * (stats_left + stats_right)
 
             spatial_joint_features = spatial_joint_transformer(heatmap_features)  # (B,T,J,128)
             traj_tokens = pjtt(motion_features)                     # (B, T, J, 384)
@@ -363,11 +470,11 @@ def main(args):
             with autocast(device_type='cuda'):
                 pose_logits = pose_decoder(gated_features, motion_features)
                 # Reshape to pose format and convert to FP32 for loss computation
-                final = pose_logits.view(B, T, num_joints, 3).float()  # Convert to FP32
+                final = pose_logits.view(B, T, num_pose_joints, 3).float()  # Convert to FP32
 
                 # Reshape for loss computation
-                final_reshaped = final.reshape(B * T, num_joints, 3)
-                gt_reshaped = gt_egoposes.reshape(B * T, num_joints, 3)
+                final_reshaped = final.reshape(B * T, num_pose_joints, 3)
+                gt_reshaped = gt_egoposes.reshape(B * T, num_pose_joints, 3)
 
                 # Compute losses (all in FP32)
                 mpjpe_loss = mpjpe_loss_func(final_reshaped, gt_reshaped)
@@ -440,9 +547,24 @@ def main(args):
         train_avg_bone = np.mean(train_bone_losses)
         train_avg_total = np.mean(train_total_losses)
 
-        # Check if this is the best model so far
-        if train_avg_total < best_loss:
-            best_loss = train_avg_total
+        # Run validation after every training epoch
+        val_metrics = None
+        if val_loader is not None:
+            print(f"Running validation for epoch {epoch}...")
+            val_metrics = run_validation(
+                val_loader, net_heatmap, encoder, heatmap_embedding,
+                spatial_stats_extractor, stereo_fusion, spatial_joint_transformer,
+                pjtt, aive, pose_decoder,
+                mpjpe_loss_func, limb_loss_func, cos_sim_loss_func, opt,
+                num_heatmap_joints, num_pose_joints,
+            )
+            print(f"Val   - MPJPE: {val_metrics['mpjpe']:.4f}, Cos: {val_metrics['cos']:.4f}, "
+                  f"Bone: {val_metrics['bone']:.4f}, Total: {val_metrics['total']:.4f}")
+
+        # Track best model: prefer validation loss if available, otherwise train loss
+        tracked_loss = val_metrics['total'] if val_metrics is not None else train_avg_total
+        if tracked_loss < best_loss:
+            best_loss = tracked_loss
             best_epoch = epoch
             
             # Save best model checkpoints
@@ -455,6 +577,8 @@ def main(args):
                        os.path.join(model_dir, 'heatmap_embedding-best.ckpt'))
             torch.save(spatial_joint_transformer.state_dict(),
                        os.path.join(model_dir, 'spatial_transformer-best.ckpt'))
+            torch.save(stereo_fusion.state_dict(),
+                       os.path.join(model_dir, 'stereo_fusion-best.ckpt'))
             torch.save(pjtt.state_dict(),
                        os.path.join(model_dir, 'pjtt-best.ckpt'))
             torch.save(aive.state_dict(),
@@ -472,6 +596,8 @@ def main(args):
                        os.path.join(model_dir, f'heatmap_embedding-{epoch + 1:03d}.ckpt'))
             torch.save(spatial_joint_transformer.state_dict(),
                        os.path.join(model_dir, f'spatial_transformer-{epoch + 1:03d}.ckpt'))
+            torch.save(stereo_fusion.state_dict(),
+                       os.path.join(model_dir, f'stereo_fusion-{epoch + 1:03d}.ckpt'))
             torch.save(pjtt.state_dict(),
                        os.path.join(model_dir, f'pjtt-{epoch + 1:03d}.ckpt'))
             torch.save(aive.state_dict(),
@@ -490,10 +616,20 @@ def main(args):
         new_lr = optimizer.param_groups[0]['lr']
         print("New learning rate:", new_lr)
         with open(loss_log_path, 'a') as log_f:
-            log_f.write(
-                f"{epoch},"
-                f"{train_avg_mpjpe:.4f},{train_avg_cos:.4f},"
-                f"{train_avg_bone:.4f},{train_avg_total:.4f},{best_loss:.4f}\n")
+            if val_metrics is not None:
+                log_f.write(
+                    f"{epoch},"
+                    f"{train_avg_mpjpe:.4f},{train_avg_cos:.4f},"
+                    f"{train_avg_bone:.4f},{train_avg_total:.4f},"
+                    f"{val_metrics['mpjpe']:.4f},{val_metrics['cos']:.4f},"
+                    f"{val_metrics['bone']:.4f},{val_metrics['total']:.4f},"
+                    f"{best_loss:.4f}\n")
+            else:
+                log_f.write(
+                    f"{epoch},"
+                    f"{train_avg_mpjpe:.4f},{train_avg_cos:.4f},"
+                    f"{train_avg_bone:.4f},{train_avg_total:.4f},"
+                    f"NA,NA,NA,NA,{best_loss:.4f}\n")
 
     # Save final model state
     print(f"\n🏁 Training completed!")
@@ -537,7 +673,7 @@ if __name__ == '__main__':
     parser.add_argument('--stride', type=int, default=64, help='sliding window stride for dataset construction')
     parser.add_argument('--crop_size', type=int, default=256, help='size for randomly cropping images')
 
-    parser.add_argument('--num_epochs', type=int, default=50)
+    parser.add_argument('--num_epochs', type=int, default=25)
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--lambda_heatmap', type=float, default=0.1, help='weight for heatmap loss')

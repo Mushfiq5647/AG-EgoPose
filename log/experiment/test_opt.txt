@@ -1,28 +1,28 @@
 --------------Options--------------
 ae_hidden_size: 20
-aive_path: sceneego/aive-best.ckpt
+aive_path: unrealego/aive-016.ckpt
 batch_size: 8
 data_dir: /data/My_Backup/UnrealEgo/scripts/data/UnrealEgoData
-decoder_path: sceneego/pose-decoder-best.ckpt
+decoder_path: unrealego/pose-decoder-016.ckpt
 display_id: 1
 display_port: 8097
 display_single_pane_ncols: 0
 display_winsize: 256
 distributed: False
-encoder_path: sceneego/encoder-best.ckpt
+encoder_path: unrealego/encoder-016.ckpt
 experiment: False
 experiment_name: experiment
 gpu_ids: [0]
 heatmap_backbone: convnext_tiny
-heatmap_path: sceneego/heatmap_embedding-best.ckpt
-heatmap_trained_path: utils/trained_heatmaps/bce_combined/heatmap_best.ckpt
+heatmap_path: unrealego/heatmap_embedding-016.ckpt
+heatmap_trained_path: utils/trained_heatmaps/bce_unrealego/heatmap_best.ckpt
 init_ImageNet: False
 init_type: kaiming
 isTrain: False
 load_size_heatmap: [64, 64]
 load_size_rgb: [256, 256]
 log_dir: log
-model: sceneego
+model: unrealego
 model_name: convnext_tiny
 ntest: inf
 num_heatmap: 15
@@ -30,14 +30,14 @@ num_seq: 1
 num_threads: 8
 path_to_trained_heatmap: None
 phase: test
-pjtt_path: sceneego/pjtt-best.ckpt
+pjtt_path: unrealego/pjtt-016.ckpt
 project_name: project_name
 save_dir_pose: results
 save_eval_pose: False
 save_eval_pose_freq: 2000
-seq_length: 64
-spatial_transformer_path: sceneego/spatial_transformer-best.ckpt
-stride: 64
+seq_length: 32
+spatial_transformer_path: unrealego/spatial_transformer-016.ckpt
+stride: 32
 use_amp: False
 use_slurm: False
 which_epoch: latest
