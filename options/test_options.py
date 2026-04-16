@@ -8,8 +8,6 @@ class TestOptions(BaseOptions):
         self.parser.add_argument('--heatmap_path', type=str, required=True, help='path for trained heatmap embedding')
         self.parser.add_argument('--heatmap_trained_path', type=str, required=True, help='path for trained 2D heatmap')
         self.parser.add_argument('--spatial_transformer_path', type=str, default=None, help='path for trained spatial transformer')
-        self.parser.add_argument('--pjtt_path', type=str, default=None, help='path for trained PJTT module')
-        self.parser.add_argument('--aive_path', type=str, default=None, help='path for trained AIVE module')
         self.parser.add_argument('--heatmap_backbone', type=str, default='convnext_tiny',
                                  help='backbone used by the trained 2D heatmap model')
         self.parser.add_argument('--ntest', type=int, default=float("inf"), help='# of test examples')

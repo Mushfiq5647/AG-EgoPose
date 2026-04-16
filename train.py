@@ -142,7 +142,7 @@ def main(args):
         os.makedirs(args.model_path)
 
     # Create loss log file
-    loss_log_path = 'loss_log_egopw_bce.txt'
+    loss_log_path = 'loss_log_sceneego_bce.txt'
     with open(loss_log_path, 'w') as f:
         f.write("Epoch, Train_MPJPE, Train_Cos, Train_Bone, Train_Total, Best_Total \n")
     
@@ -471,7 +471,7 @@ if __name__ == '__main__':
     parser.add_argument('--stride', type=int, default=64, help='sliding window stride for dataset construction')
     parser.add_argument('--crop_size', type=int, default=256, help='size for randomly cropping images')
 
-    parser.add_argument('--num_epochs', type=int, default=50)
+    parser.add_argument('--num_epochs', type=int, default=60)
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--lambda_heatmap', type=float, default=0.1, help='weight for heatmap loss')

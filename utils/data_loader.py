@@ -182,7 +182,7 @@ class EgoPwWindowDataset(torch.utils.data.Dataset):
     def __init__(self, opt, transform, mode, window_size=None, stride=None):
         self.transform = transform
         self.window_size = window_size if window_size is not None else getattr(opt, 'seq_length', 64)
-        self.stride = stride if stride is not None else getattr(opt, 'stride', 16)
+        self.stride = stride if stride is not None else getattr(opt, 'stride', 64)
 
         # Read sequence directories
         sequnce_directory = f'{mode}_egopw.txt'
@@ -272,7 +272,7 @@ class SceneEgoWindowDataset(torch.utils.data.Dataset):
     def __init__(self, opt, transform, mode, window_size=None, stride=None):
         self.transform = transform
         self.window_size = window_size if window_size is not None else getattr(opt, 'seq_length', 64)
-        self.stride = stride if stride is not None else getattr(opt, 'stride', 32)
+        self.stride = stride if stride is not None else getattr(opt, 'stride', 64)
 
         # Read sequence directories
         sequnce_directory = f'{mode}_sceneego.txt'

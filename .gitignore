@@ -22,3 +22,4 @@ loss_log_egopw_bce.txt
 loss_log_finetune_seq64.txt
 sceneego/
 test_results.txt
+README.md

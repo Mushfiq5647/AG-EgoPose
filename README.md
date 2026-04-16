@@ -151,23 +151,23 @@ Checkpoints are saved under `--model_path`:
 python train_finetune.py \
   --model_path utils/exp_finetune \
   --heatmap_trained_path utils/trained_heatmaps/bce_combined/heatmap_best.ckpt \
-  --encoder_path utils/trained_egopwtrain_bce_seq64/encoder-best.ckpt \
-  --decoder_path utils/trained_egopwtrain_bce_seq64/pose-decoder-best.ckpt \
-  --heatmap_path utils/trained_egopwtrain_bce_seq64/heatmap_embedding-best.ckpt \
-  --spatial_transformer_path utils/trained_egopwtrain_bce_seq64/spatial_transformer-best.ckpt \
-  --pjtt_path utils/trained_egopwtrain_bce_seq64/pjtt-best.ckpt \
-  --aive_path utils/trained_egopwtrain_bce_seq64/aive-best.ckpt
+  --encoder_path utils/sceneego/encoder-best.ckpt \
+  --decoder_path utils/sceneego/pose-decoder-best.ckpt \
+  --heatmap_path utils/sceneego/heatmap_embedding-best.ckpt \
+  --spatial_transformer_path utils/sceneego/spatial_transformer-best.ckpt \
+  --pjtt_path utils/sceneego/pjtt-best.ckpt \
+  --aive_path utils/sceneego/aive-best.ckpt
 ```
 
 ## Evaluate
 
 ```bash
 python test.py \
-  --encoder_path utils/trained_model/encoder-best.ckpt \
-  --decoder_path utils/trained_model/pose-decoder-best.ckpt \
+  --encoder_path utils/sceneego/encoder-best.ckpt \
+  --decoder_path utils/sceneego/pose-decoder-best.ckpt \
   --heatmap_trained_path utils/trained_heatmaps/bce_combined/heatmap_best.ckpt \
-  --heatmap_path utils/trained_model/heatmap_embedding-best.ckpt \
-  --spatial_transformer_path utils/trained_model/spatial_transformer-best.ckpt \
+  --heatmap_path utils/sceneego/heatmap_embedding-best.ckpt \
+  --spatial_transformer_path utils/sceneego/spatial_transformer-best.ckpt \
   --pjtt_path utils/trained_model/pjtt-best.ckpt \
   --aive_path utils/trained_model/aive-best.ckpt
 ```
@@ -180,3 +180,9 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 Copyright (c) 2026 Md Mushfiqur Azam
 
 
+#no pjt and aive - feature/spatial-actionformer-decoder
+
+#contributions:
+We propose a cross-task temporal motion prior for egocentric 3D pose estimation by repurposing a pretrained action detection backbone (ActionFormer) as a motion encoder, enabling the model to leverage action-temporal dynamics without requiring explicit action labels at inference time.
+
+We introduce a joint-wise spatial-temporal cross-attention fusion mechanism, where each joint's heatmap-derived spatial representation independently retrieves relevant temporal context from the action-informed motion sequence, enabling joint-specific adaptation to motion dynamics rather than uniform temporal conditioning across all body joints.
