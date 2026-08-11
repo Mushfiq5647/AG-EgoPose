@@ -522,7 +522,7 @@ class UnrealEgoWindowDataset(torch.utils.data.Dataset):
                 input_rgb_left = self.transform(input_rgb_left)
                 input_rgb_right = self.transform(input_rgb_right)
             gt_heatmap_left = torch.from_numpy(frame_data["gt_heatmap_left"]).float()
-            gt_heatmap_right = torch.from_numpy(frame_data["gt_heatmap_right"]).float()
+            gt_heatmap_right = torch.from_numpy(frame_data["gt_heatmap_right"]) float()
             gt_local_pose = torch.from_numpy(frame_data["gt_local_pose"]).float()
             imgs_left.append(input_rgb_left)
             imgs_right.append(input_rgb_right)

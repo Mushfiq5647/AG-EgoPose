@@ -131,7 +131,7 @@ Note: this script uses the repo's `TrainOptions`/dataloader and assumes your dat
 
 ```bash
 python train.py \
-  --model_path utils/trained_model \
+  --model_path utils/sceneego \
   --heatmap_trained_path utils/trained_heatmaps/bce_combined/heatmap_best.ckpt \
   --config_path actionformer/config/ego4D_egovlp.yaml
 ```
@@ -149,7 +149,7 @@ Checkpoints are saved under `--model_path`:
 
 ```bash
 python train_finetune.py \
-  --model_path utils/exp_finetune \
+  --model_path sceneego-finetune \
   --heatmap_trained_path utils/trained_heatmaps/bce_combined/heatmap_best.ckpt \
   --encoder_path utils/sceneego/encoder-best.ckpt \
   --decoder_path utils/sceneego/pose-decoder-best.ckpt \
@@ -163,11 +163,12 @@ python train_finetune.py \
 
 ```bash
 python test.py \
-  --encoder_path utils/sceneego/encoder-best.ckpt \
-  --decoder_path utils/sceneego/pose-decoder-best.ckpt \
-  --heatmap_trained_path utils/trained_heatmaps/bce_combined/heatmap_best.ckpt \
-  --heatmap_path utils/sceneego/heatmap_embedding-best.ckpt \
-  --spatial_transformer_path utils/sceneego/spatial_transformer-best.ckpt \
+  --encoder_path sceneego-finetune/encoder-best.ckpt \
+  --decoder_path sceneego-finetune/pose-decoder-best.ckpt \
+  --heatmap_trained_path sceneego-finetune/trained_heatmaps/bce_combined/heatmap_best.ckpt \
+  --heatmap_path sceneego-finetune/heatmap_embedding-best.ckpt \
+  --spatial_transformer_path sceneego-finetune/spatial_transformer-best.ckpt \
+  --bench_only
   --pjtt_path utils/trained_model/pjtt-best.ckpt \
   --aive_path utils/trained_model/aive-best.ckpt
 ```
@@ -186,3 +187,11 @@ Copyright (c) 2026 Md Mushfiqur Azam
 We propose a cross-task temporal motion prior for egocentric 3D pose estimation by repurposing a pretrained action detection backbone (ActionFormer) as a motion encoder, enabling the model to leverage action-temporal dynamics without requiring explicit action labels at inference time.
 
 We introduce a joint-wise spatial-temporal cross-attention fusion mechanism, where each joint's heatmap-derived spatial representation independently retrieves relevant temporal context from the action-informed motion sequence, enabling joint-specific adaptation to motion dynamics rather than uniform temporal conditioning across all body joints.
+
+Ablation Scopes
+Full (baseline)
+− Temporal stream (no ActionFormer)
+− Spatial stream (no heatmap path)
+Frozen ActionFormer vs fine-tuned
+Random-init vs pretrained ActionFormer (cross-task transfer claim)
+Concat fusion vs cross-attention fusion

@@ -341,23 +341,25 @@ class PoseDecoder(nn.Module):
     """
 
     def __init__(self, joint_dim=128, motion_dim=384, num_joints=15,
-                 num_heads=4, num_layers=3):
+                 num_heads=4, num_layers=3, use_mcjq=True):
         super().__init__()
         self.num_joints = num_joints
+        self.use_mcjq = use_mcjq
 
         # ── Motion-Conditioned Joint Queries (MCJQ) ──────────────────
         # Static base queries (one per joint)
         self.joint_queries = nn.Parameter(torch.randn(num_joints, joint_dim))
         nn.init.normal_(self.joint_queries, std=0.02)
-        # Shared motion projection to query space
-        self.query_motion_proj = nn.Sequential(
-            nn.Linear(motion_dim, joint_dim),
-            nn.GELU(),
-        )
-        # Per-joint modulation gates: each joint selects which dimensions
-        # of the motion context are relevant for its query
-        self.joint_modulation = nn.Parameter(torch.randn(num_joints, joint_dim))
-        nn.init.normal_(self.joint_modulation, std=0.02)
+        if use_mcjq:
+            # Shared motion projection to query space
+            self.query_motion_proj = nn.Sequential(
+                nn.Linear(motion_dim, joint_dim),
+                nn.GELU(),
+            )
+            # Per-joint modulation gates: each joint selects which dimensions
+            # of the motion context are relevant for its query
+            self.joint_modulation = nn.Parameter(torch.randn(num_joints, joint_dim))
+            nn.init.normal_(self.joint_modulation, std=0.02)
         self.query_norm = nn.LayerNorm(joint_dim)
 
         # ── Spatial-Temporal Cross-Attention Fusion ───────────────────
@@ -420,14 +422,17 @@ class PoseDecoder(nn.Module):
                   .reshape(B * T, J, D))
 
         # ── 2. Motion-Conditioned Joint Queries (MCJQ) ───────────────
-        # Factored conditioning: shared motion context × per-joint gates
-        motion_ctx = self.query_motion_proj(
-            motion_features.reshape(B * T, -1)           # (B*T, motion_dim)
-        ).unsqueeze(1)                                    # (B*T, 1, D)
-        modulation = self.joint_modulation.unsqueeze(0)   # (1, J, D)
-        offsets = motion_ctx * modulation                 # (B*T, J, D)
-
-        queries = self.joint_queries.unsqueeze(0) + offsets  # (B*T, J, D)
+        if self.use_mcjq:
+            # Factored conditioning: shared motion context × per-joint gates
+            motion_ctx = self.query_motion_proj(
+                motion_features.reshape(B * T, -1)           # (B*T, motion_dim)
+            ).unsqueeze(1)                                    # (B*T, 1, D)
+            modulation = self.joint_modulation.unsqueeze(0)   # (1, J, D)
+            offsets = motion_ctx * modulation                 # (B*T, J, D)
+            queries = self.joint_queries.unsqueeze(0) + offsets  # (B*T, J, D)
+        else:
+            # Ablation: static learned queries only (vanilla DETR-style)
+            queries = self.joint_queries.unsqueeze(0).expand(B * T, -1, -1)
         queries = self.query_norm(queries)
 
         # ── 3. Decoder + Regression ──────────────────────────────────
@@ -435,6 +440,60 @@ class PoseDecoder(nn.Module):
         decoded = decoded + queries  # residual: decoder refines, not reconstructs
         poses_3d = self.pose_head(decoded)
 
+        return poses_3d.view(B, T, J, 3)
+
+
+class ConcatFusionDecoder(nn.Module):
+    """Ablation baseline: concat spatial + temporal, then self-attention on
+    the unified joint memory followed by pose regression.
+
+    No cross-attention, no MCJQ — tests whether explicit cross-stream
+    attention matters vs letting self-attention sort out the fusion.
+    """
+
+    def __init__(self, joint_dim=128, motion_dim=384, num_joints=15,
+                 num_heads=4, num_layers=3):
+        super().__init__()
+        self.num_joints = num_joints
+
+        self.motion_proj = nn.Linear(motion_dim, joint_dim)
+        self.fuse_proj = nn.Sequential(
+            nn.Linear(joint_dim * 2, joint_dim),
+            nn.GELU(),
+        )
+        self.fuse_norm = nn.LayerNorm(joint_dim)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=joint_dim,
+            nhead=num_heads,
+            dim_feedforward=joint_dim * 4,
+            batch_first=True,
+            activation='gelu',
+        )
+        self.self_attn = nn.TransformerEncoder(encoder_layer, num_layers)
+
+        self.pose_head = nn.Sequential(
+            nn.Linear(joint_dim, joint_dim),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(joint_dim, 3),
+        )
+
+    def forward(self, spatial_joint_features, motion_features):
+        B, T, J, D = spatial_joint_features.shape
+
+        motion_proj = self.motion_proj(motion_features)             # (B, T, D)
+        motion_tiled = motion_proj.unsqueeze(2).expand(-1, -1, J, -1)  # (B, T, J, D)
+
+        concat = torch.cat([spatial_joint_features, motion_tiled], dim=-1)  # (B, T, J, 2D)
+        fused = self.fuse_proj(concat)                               # (B, T, J, D)
+        fused = self.fuse_norm(fused)
+
+        fused_flat = fused.reshape(B * T, J, D)
+        refined = self.self_attn(fused_flat)                         # (B*T, J, D)
+        refined = refined + fused_flat                               # residual
+
+        poses_3d = self.pose_head(refined)
         return poses_3d.view(B, T, J, 3)
 
 

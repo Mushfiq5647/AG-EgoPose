@@ -13,7 +13,7 @@ epoch_count: 1
 experiment: False
 experiment_name: experiment
 gpu_ids: [0]
-heatmap_trained_path: utils/trained_heatmaps/bce_combined/heatmap_best.ckpt
+heatmap_trained_path: /data/My_Backup/ag-egopose-ckpt/trained_heatmaps/bce_combined/heatmap_best.ckpt
 init_ImageNet: False
 init_type: kaiming
 isTrain: True
@@ -31,7 +31,7 @@ lr_decay_iters_step: 4
 lr_policy: lambda
 model: sceneego
 model_name: convnext_tiny
-model_path: sceneego-finetune
+model_path: sceneego-finetune-from-seed17-best
 niter: 0
 niter_decay: 0
 num_heatmap: 15
@@ -45,7 +45,7 @@ save_dir_pose: results
 save_epoch_freq: 1
 save_latest_freq: 4000
 seq_length: 64
-stride: 16
+stride: 64
 task_epoch: 0
 transform_epoch: 0
 use_amp: False

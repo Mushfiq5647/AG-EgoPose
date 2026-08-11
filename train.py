@@ -8,18 +8,27 @@ from torchvision import transforms
 from torch.amp import autocast, GradScaler
 
 from utils.action_recognition import initialize_actionformer
+from utils.temporal_baselines import build_temporal_baseline
 from options.train_options import TrainOptions
 from utils.data_loader import dataloader_full
 from utils.cross_attention_model import HeatmapToJointFeatures
 from utils.cross_attention_model import SpatialJointTransformer
-from utils.cross_attention_model import PoseDecoder
+from utils.cross_attention_model import PoseDecoder, ConcatFusionDecoder
+from utils.model import MLPPoseDecoder
 from heatmaps.network_heatmap import HeatMap_Network
 from utils.loss import LossFuncLimb, LossFuncMPJPE, LossFuncCosSim  # Add bone length loss import
 from utils.model import  FeatureEncoder
 import socket
 print("Running on host:", socket.gethostname())
 torch.set_printoptions(threshold=torch.inf)
-torch.manual_seed(7)
+
+
+def set_seed(seed):
+    """Seed torch + numpy for the variance study (R2 W5)."""
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -136,15 +145,39 @@ def update_learning_rate(self):
     print('learning rate %.7f -> %.7f' % (old_lr, lr))
 
 
+CKPT_BASE = '/data/My_Backup/ag-egopose-ckpt'
+
+
 def main(args):
-    actionformer_feature_extractor = initialize_actionformer(config_file_path=args.config_path)
+    set_seed(args.seed)
+    print(f"Random seed: {args.seed}")
+    if args.skip_temporal:
+        actionformer_feature_extractor = None
+        print("ABLATION: Skipping entire temporal stream (DINOv2 + ActionFormer)")
+    elif args.temporal_baseline:
+        # ABLATION (R2 W1 / R4 W1): replace the Ego4D-pretrained ActionFormer
+        # with a generic temporal encoder trained from scratch (matched
+        # trainable budget). Isolates the action-pretrained prior from
+        # generic temporal modeling.
+        actionformer_feature_extractor = build_temporal_baseline(
+            args.temporal_baseline, dim=384, causal=args.causal
+        ).to(device)
+        print(f"ABLATION: temporal baseline '{args.temporal_baseline}' "
+              f"(from scratch, causal={args.causal}) replacing ActionFormer")
+    else:
+        actionformer_feature_extractor = initialize_actionformer(
+            config_file_path=args.config_path,
+            random_init=args.random_actionformer
+        )
     if not os.path.exists(args.model_path):
         os.makedirs(args.model_path)
 
-    # Create loss log file
-    loss_log_path = 'loss_log_sceneego_bce.txt'
+    # Create loss log file with dynamic name based on model path
+    model_name = os.path.basename(args.model_path)
+    loss_log_path = f'loss_log_{model_name}.txt'
     with open(loss_log_path, 'w') as f:
         f.write("Epoch, Train_MPJPE, Train_Cos, Train_Bone, Train_Total, Best_Total \n")
+    print(f"Loss log file: {loss_log_path}")
     
     # Track best model
     best_loss = float('inf')
@@ -186,50 +219,78 @@ def main(args):
         print(f"Warning: Pre-trained heatmap model not found at {args.heatmap_trained_path}")
         print("Will use ground truth heatmaps for training")
     
+    # R5 ablation: single-network spatial path (image -> joint tokens directly)
+    # replaces {heatmap net + tokenizer + SJT}. Tests "one net vs three".
+    single_net_spatial = None
+    if args.spatial_baseline == 'single_net':
+        from utils.spatial_baselines import SingleNetSpatial
+        single_net_spatial = SingleNetSpatial(num_joints=15, feature_dim=args.hm_embed_dim).to(device)
+        print("ABLATION (R5): SingleNetSpatial — one net replaces heatmap+tokenizer+SJT")
+
     # Spatial path: conv encoder extracts rich 128-dim features from 64x64 heatmaps
     heatmap_embedding = HeatmapToJointFeatures(heatmap_size=64, feature_dim=args.hm_embed_dim, method='conv_pool').to(device)
-    encoder = FeatureEncoder(actionformer_feature_extractor).to(device)
+    encoder = FeatureEncoder(actionformer_feature_extractor, skip_temporal=args.skip_temporal,
+                             dino_feature=args.dino_feature).to(device)
     spatial_joint_transformer = SpatialJointTransformer(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
-    pose_decoder = PoseDecoder(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
+    if args.mlp_decoder:
+        pose_decoder = MLPPoseDecoder(motion_dim=384, joint_dim=args.hm_embed_dim).to(device)
+        print("ABLATION: Using MLPPoseDecoder (concat + MLP, no transformer/attention)")
+    elif args.concat_fusion:
+        pose_decoder = ConcatFusionDecoder(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
+        print("ABLATION: Using ConcatFusionDecoder (concat + self-attention, no cross-attention/MCJQ)")
+    else:
+        pose_decoder = PoseDecoder(args.hm_embed_dim, num_heads=4, num_layers=3,
+                                   use_mcjq=not args.skip_mcjq).to(device)
+        if args.skip_mcjq:
+            print("ABLATION: Skipping MCJQ — using static learned queries only")
     print("Models initialized")
 
     # --- ActionFormer selective unfreeze ---
-    # Pretrained ActionFormer params are already frozen in initialize_actionformer().
-    # Now selectively unfreeze components that need to adapt:
-    #   1. input_proj: new layer (DINOv2 384 -> ActionFormer 256), must train
-    #   2. embedding convs: must adapt from EgoVLP to DINOv2-projected features
-    #   3. last 2 branch transformer blocks: fine-tune temporal representations
-    #   4. channel_projector: new layer (multi-scale fusion), must train
     af_unfrozen_params = []
-    backbone = actionformer_feature_extractor.model.backbone
+    if args.temporal_baseline and not args.skip_temporal:
+        # Baseline trained fully from scratch at the main LR (no selective
+        # unfreeze, no 0.1x group). Unfreeze only the baseline module —
+        # DINOv2 stays frozen (FeatureEncoder freezes it internally).
+        for p in actionformer_feature_extractor.parameters():
+            p.requires_grad = True
+        n_base = sum(p.numel() for p in actionformer_feature_extractor.parameters())
+        print(f"Temporal baseline trainable params: {n_base:,} (main LR, from scratch)")
+    elif not args.skip_temporal and not args.freeze_actionformer:
+        # Pretrained ActionFormer params are already frozen in initialize_actionformer().
+        # Now selectively unfreeze components that need to adapt:
+        #   1. input_proj: new layer (DINOv2 384 -> ActionFormer 256), must train
+        #   2. embedding convs: must adapt from EgoVLP to DINOv2-projected features
+        #   3. last 2 branch transformer blocks: fine-tune temporal representations
+        #   4. channel_projector: new layer (multi-scale fusion), must train
+        backbone = actionformer_feature_extractor.model.backbone
 
-    # input_proj is new (randomly initialized), always trainable
-    for p in actionformer_feature_extractor.input_proj.parameters():
-        p.requires_grad = True
-        af_unfrozen_params.append(p)
-
-    # Embedding convs need to adapt to DINOv2-projected input statistics
-    for p in backbone.embd.parameters():
-        p.requires_grad = True
-        af_unfrozen_params.append(p)
-    for p in backbone.embd_norm.parameters():
-        p.requires_grad = True
-        af_unfrozen_params.append(p)
-
-    # Last 2 branch transformer blocks
-    num_branch = len(backbone.branch)
-    print(f"ActionFormer has {num_branch} branch blocks, unfreezing last 2")
-    for blk in backbone.branch[num_branch - 2:]:
-        for p in blk.parameters():
+        for p in actionformer_feature_extractor.input_proj.parameters():
             p.requires_grad = True
             af_unfrozen_params.append(p)
 
-    # channel_projector is new (randomly initialized), always trainable
-    for p in actionformer_feature_extractor.channel_projector.parameters():
-        p.requires_grad = True
-        af_unfrozen_params.append(p)
+        for p in backbone.embd.parameters():
+            p.requires_grad = True
+            af_unfrozen_params.append(p)
+        for p in backbone.embd_norm.parameters():
+            p.requires_grad = True
+            af_unfrozen_params.append(p)
 
-    print(f"ActionFormer unfrozen params: {sum(p.numel() for p in af_unfrozen_params):,}")
+        num_branch = len(backbone.branch)
+        print(f"ActionFormer has {num_branch} branch blocks, unfreezing last 2")
+        for blk in backbone.branch[num_branch - 2:]:
+            for p in blk.parameters():
+                p.requires_grad = True
+                af_unfrozen_params.append(p)
+
+        for p in actionformer_feature_extractor.channel_projector.parameters():
+            p.requires_grad = True
+            af_unfrozen_params.append(p)
+
+        print(f"ActionFormer unfrozen params: {sum(p.numel() for p in af_unfrozen_params):,}")
+    elif args.freeze_actionformer and not args.skip_temporal:
+        print("ABLATION: ActionFormer fully frozen (no selective unfreeze)")
+    else:
+        print("ActionFormer skipped — no params to unfreeze")
 
     #Initialize weights
     pose_decoder.apply(initialize_gelu_weights)
@@ -245,20 +306,32 @@ def main(args):
 
     # Separate param groups: ActionFormer unfrozen layers get 10x lower LR
     af_param_ids = {id(p) for p in af_unfrozen_params}
-    all_other_params = [p for p in (
-            list(encoder.parameters()) +
-            list(heatmap_embedding.parameters()) +
-            list(pose_decoder.parameters()) +
-            list(spatial_joint_transformer.parameters())
-    ) if p.requires_grad and id(p) not in af_param_ids]
+    trainable_modules = [pose_decoder]
+    if not args.skip_temporal:
+        trainable_modules.append(encoder)
+    if not args.skip_spatial:
+        if single_net_spatial is not None:
+            # R5 baseline replaces heatmap+tokenizer+SJT with one net
+            trainable_modules.append(single_net_spatial)
+        else:
+            trainable_modules.append(heatmap_embedding)
+            if not args.skip_sjt:
+                trainable_modules.append(spatial_joint_transformer)
+    all_other_params = [p for m in trainable_modules for p in m.parameters()
+                        if p.requires_grad and id(p) not in af_param_ids]
 
     # Collect all trainable params for gradient clipping
     all_trainable_params = all_other_params + af_unfrozen_params
 
-    optimizer = torch.optim.AdamW([
-        {'params': all_other_params, 'lr': args.learning_rate},
-        {'params': af_unfrozen_params, 'lr': args.learning_rate * 0.1}
-    ], weight_decay=args.weight_decay)
+    if af_unfrozen_params:
+        optimizer = torch.optim.AdamW([
+            {'params': all_other_params, 'lr': args.learning_rate},
+            {'params': af_unfrozen_params, 'lr': args.learning_rate * 0.1}
+        ], weight_decay=args.weight_decay)
+    else:
+        optimizer = torch.optim.AdamW(
+            all_other_params, lr=args.learning_rate, weight_decay=args.weight_decay
+        )
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
@@ -269,7 +342,7 @@ def main(args):
     # Mixed precision training for memory efficiency
     scaler = GradScaler(device='cuda')
     # Save checkpoints under --model_path (so experiments are reproducible without editing code)
-    model_dir = os.path.abspath(args.model_path)
+    model_dir = args.model_path if os.path.isabs(args.model_path) else os.path.join(CKPT_BASE, args.model_path)
     os.makedirs(model_dir, exist_ok=True)
     print(f"Checkpoint directory: {model_dir}")
     total_step = len(data_loader)
@@ -292,31 +365,38 @@ def main(args):
             B, T, _, H_img, W_img = images.shape
             H_hm, W_hm = 64,64
             gt_egoposes = batch['gt_local_pose'].to(device)
-            # Compute heatmaps from frozen net_heatmap, then detach and enable gradients
-            # This allows: net_heatmap (frozen) → heatmaps (differentiable inputs) → heatmap_embedding.encoder (trainable)
-            with torch.no_grad():
-                all_images_flat = images.view(-1, 3, H_img, W_img)  # [B*T, 3, H, W]
-                all_heatmaps = net_heatmap(all_images_flat)  # [B*T, J, H_hm, W_hm]
-                all_heatmaps = torch.sigmoid(all_heatmaps)  # Convert logits to 0-1 range
-            # Detach from frozen net_heatmap, but enable gradients for downstream modules
-            heatmaps = all_heatmaps.detach().view(B, T, 15, H_hm, W_hm)  # [B, T, 15, H_hm, W_hm]
-            heatmaps.requires_grad_(True)  # Enable gradient computation for heatmap_embedding/spatial_transformer
-            
-            # Only encoder (heavy DINOv2 + ActionFormer) needs autocast for memory efficiency
-            with autocast(device_type='cuda'):
-                motion_features = encoder(images)                       # (B, T, 384)
+            if args.skip_temporal:
+                # Ablation: no temporal stream — zeros as motion input
+                motion_features = torch.zeros(B, T, 384, device=device)
+            else:
+                with autocast(device_type='cuda'):
+                    motion_features = encoder(images)                   # (B, T, 384)
+                motion_features = motion_features.float()
 
-            # All cross-stream modules in float32 to prevent gradient underflow
-            # (these are lightweight — autocast savings are negligible but float16 kills their gradients)
-            motion_features = motion_features.float()
+            if args.skip_spatial:
+                # Ablation: no spatial stream — zeros as spatial input, ActionFormer still active
+                spatial_joint_features = torch.zeros(B, T, 15, args.hm_embed_dim, device=device)
+            elif single_net_spatial is not None:
+                # R5 ablation: one net maps image -> joint tokens (no heatmap/tokenizer/SJT)
+                spatial_joint_features = single_net_spatial(images)  # (B,T,J,128)
+            else:
+                # Compute heatmaps from frozen net_heatmap, then detach and enable gradients
+                with torch.no_grad():
+                    all_images_flat = images.view(-1, 3, H_img, W_img)  # [B*T, 3, H, W]
+                    all_heatmaps = net_heatmap(all_images_flat)  # [B*T, J, H_hm, W_hm]
+                    all_heatmaps = torch.sigmoid(all_heatmaps)
+                heatmaps = all_heatmaps.detach().view(B, T, 15, H_hm, W_hm)
+                heatmaps.requires_grad_(True)
 
-            # Spatial path: conv encoder → rich 128-dim features
-            heatmap_features = heatmap_embedding(heatmaps)              # (B,T,J,128)
-            spatial_joint_features = spatial_joint_transformer(heatmap_features)  # (B,T,J,128)
+                heatmap_features = heatmap_embedding(heatmaps)              # (B,T,J,128)
+                if args.skip_sjt:
+                    spatial_joint_features = heatmap_features               # (B,T,J,128) — no inter-joint reasoning
+                else:
+                    spatial_joint_features = spatial_joint_transformer(heatmap_features)  # (B,T,J,128)
 
-            if i == 0:
-                print(f"DEBUG: heatmap_features shape={heatmap_features.shape}, dtype={heatmap_features.dtype}")
-                print(f"DEBUG: spatial_joint_features shape={spatial_joint_features.shape}")
+                if i == 0:
+                    print(f"DEBUG: heatmap_features shape={heatmap_features.shape}, dtype={heatmap_features.dtype}")
+                    print(f"DEBUG: spatial_joint_features shape={spatial_joint_features.shape}")
 
             # Pose decoder fuses spatial + temporal features directly
             with autocast(device_type='cuda'):
@@ -393,12 +473,19 @@ def main(args):
             print(f"🎯 New best model! Loss: {best_loss:.4f} (Epoch {best_epoch})")
             torch.save(pose_decoder.state_dict(),
                        os.path.join(model_dir, 'pose-decoder-best.ckpt'))
-            torch.save(encoder.state_dict(),
-                       os.path.join(model_dir, 'encoder-best.ckpt'))
-            torch.save(heatmap_embedding.state_dict(),
-                       os.path.join(model_dir, 'heatmap_embedding-best.ckpt'))
-            torch.save(spatial_joint_transformer.state_dict(),
-                       os.path.join(model_dir, 'spatial_transformer-best.ckpt'))
+            if not args.skip_temporal:
+                torch.save(encoder.state_dict(),
+                           os.path.join(model_dir, 'encoder-best.ckpt'))
+            if not args.skip_spatial:
+                if single_net_spatial is not None:
+                    torch.save(single_net_spatial.state_dict(),
+                               os.path.join(model_dir, 'single_net_spatial-best.ckpt'))
+                else:
+                    torch.save(heatmap_embedding.state_dict(),
+                               os.path.join(model_dir, 'heatmap_embedding-best.ckpt'))
+                    if not args.skip_sjt:
+                        torch.save(spatial_joint_transformer.state_dict(),
+                                   os.path.join(model_dir, 'spatial_transformer-best.ckpt'))
             print(f"Saved best checkpoints to {model_dir}")
 
         # Save periodic checkpoints
@@ -406,12 +493,15 @@ def main(args):
             print(f"Saving periodic checkpoints for epoch {epoch + 1} to {model_dir}")
             torch.save(pose_decoder.state_dict(),
                        os.path.join(model_dir, f'pose-decoder-{epoch + 1:03d}.ckpt'))
-            torch.save(encoder.state_dict(),
-                       os.path.join(model_dir, f'encoder-{epoch + 1:03d}.ckpt'))
-            torch.save(heatmap_embedding.state_dict(),
-                       os.path.join(model_dir, f'heatmap_embedding-{epoch + 1:03d}.ckpt'))
-            torch.save(spatial_joint_transformer.state_dict(),
-                       os.path.join(model_dir, f'spatial_transformer-{epoch + 1:03d}.ckpt'))
+            if not args.skip_temporal:
+                torch.save(encoder.state_dict(),
+                           os.path.join(model_dir, f'encoder-{epoch + 1:03d}.ckpt'))
+            if not args.skip_spatial:
+                torch.save(heatmap_embedding.state_dict(),
+                           os.path.join(model_dir, f'heatmap_embedding-{epoch + 1:03d}.ckpt'))
+                if not args.skip_sjt:
+                    torch.save(spatial_joint_transformer.state_dict(),
+                               os.path.join(model_dir, f'spatial_transformer-{epoch + 1:03d}.ckpt'))
             print(f"Saved periodic checkpoints for epoch {epoch + 1} to {model_dir}")
 
         # Print epoch summary
@@ -448,7 +538,9 @@ if __name__ == '__main__':
                         help='path to the config file')
     parser.add_argument('--model_path', type=str, required=True, help='path for saving trained models')
     # parser.add_argument('--annotation_path', type=str, required=True, help='path for annotation wrapper')
-    parser.add_argument('--heatmap_trained_path', type=str, required=True, help='path for trained 2D heatmap')
+    parser.add_argument('--heatmap_trained_path', type=str,
+                        default='/data/My_Backup/ag-egopose-ckpt/trained_heatmaps/bce_combined/heatmap_best.ckpt',
+                        help='path for trained 2D heatmap')
     parser.add_argument('--heatmap_backbone', type=str, default='convnext_tiny',
                         choices=['convnext_tiny', 'resnet18', 'resnet34', 'resnet50', 'resnet101'],
                         help='backbone for 2D heatmap network (default: convnext_tiny)')
@@ -479,6 +571,37 @@ if __name__ == '__main__':
     parser.add_argument('--log_step', type=int, default=10, help='step size for prining log info')
     parser.add_argument('--save_step', type=int, default=100, help='step size for saving trained models')
     parser.add_argument('--save_interval', type=int, default=2, help='save checkpoint every N epochs')
+    parser.add_argument('--skip_temporal', action='store_true',
+                        help='ablation: skip ActionFormer, use raw DINOv2 features as motion input')
+    parser.add_argument('--skip_spatial', action='store_true',
+                        help='ablation: skip spatial stream (heatmaps/SJT), use only temporal motion features')
+    parser.add_argument('--skip_sjt', action='store_true',
+                        help='ablation: skip SpatialJointTransformer, use raw heatmap features')
+    parser.add_argument('--concat_fusion', action='store_true',
+                        help='ablation: concat + self-attention fusion instead of cross-attention/MCJQ')
+    parser.add_argument('--skip_mcjq', action='store_true',
+                        help='ablation: skip Motion-Conditioned Joint Queries, use static learned queries only')
+    parser.add_argument('--freeze_actionformer', action='store_true',
+                        help='ablation: keep ActionFormer fully frozen (no selective unfreeze)')
+    parser.add_argument('--random_actionformer', action='store_true',
+                        help='ablation: randomly initialized ActionFormer (no pretrained weights)')
+    parser.add_argument('--mlp_decoder', action='store_true',
+                        help='ablation: simple MLP decoder (concat + MLP, no transformer)')
+    parser.add_argument('--temporal_baseline', type=str, default=None,
+                        choices=['tcn', 'lstm'],
+                        help='ablation (R2/R4): replace ActionFormer with a from-scratch '
+                             'temporal encoder (tcn or lstm) to isolate the action prior')
+    parser.add_argument('--causal', action='store_true',
+                        help='ablation (R4): causal/streaming temporal encoder — mask future '
+                             'frames. Works with --temporal_baseline; measures streaming cost')
+    parser.add_argument('--seed', type=int, default=7,
+                        help='random seed (R2 W5: run 3 seeds for mean±std variance study)')
+    parser.add_argument('--dino_feature', type=str, default='cls',
+                        choices=['cls', 'patch_mean'],
+                        help='R2 W6 ablation: DINOv2 CLS token vs mean-pooled patch tokens')
+    parser.add_argument('--spatial_baseline', type=str, default=None,
+                        choices=['single_net'],
+                        help='R5 ablation: replace heatmap+tokenizer+SJT with one net (image->joint tokens)')
 
     args = parser.parse_args()
     print(args)

@@ -68,17 +68,21 @@ class ActionFormerFeatureExtractor(nn.Module):
         return fused.permute(0, 2, 1)
 
 
-def initialize_actionformer(config_file_path):
+def initialize_actionformer(config_file_path, random_init=False):
     config = load_config(config_file_path)
     actionformer_model = make_meta_arch(config['model_name'], **config['model'])
 
-    checkpoint = torch.load(
-        'actionformer/ego4d_egovlp_reproduce/epoch_010.pth.tar',
-        map_location=torch.device('cuda')
-    )
-    state_dict = checkpoint['state_dict']
-    new_state_dict = {key.replace('module.', ''): value for key, value in state_dict.items()}
-    actionformer_model.load_state_dict(new_state_dict)
+    if random_init:
+        print("ABLATION: ActionFormer randomly initialized (no pretrained weights)")
+    else:
+        checkpoint = torch.load(
+            'actionformer/ego4d_egovlp_reproduce/epoch_010.pth.tar',
+            map_location=torch.device('cuda')
+        )
+        state_dict = checkpoint['state_dict']
+        new_state_dict = {key.replace('module.', ''): value for key, value in state_dict.items()}
+        actionformer_model.load_state_dict(new_state_dict)
+
     actionformer_model = actionformer_model.to(device)
     actionformer_model.eval()
 
@@ -86,8 +90,7 @@ def initialize_actionformer(config_file_path):
     actionformer_feature_extractor = ActionFormerFeatureExtractor(actionformer_model)
     actionformer_feature_extractor = actionformer_feature_extractor.to(device)
 
-    # Freeze all pretrained ActionFormer parameters initially
-    # (selective unfreezing happens in train.py)
+    # Freeze all parameters initially (selective unfreezing happens in train.py)
     for param in actionformer_model.parameters():
         param.requires_grad = False
 

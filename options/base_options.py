@@ -44,8 +44,8 @@ class BaseOptions():
         self.parser.add_argument('--num_heatmap', type=int, default=15,
                                 help='# of heatmaps')
         self.parser.add_argument('--num_threads', default=8, type=int,
-                                help='# threads for loading data')
-        self.parser.add_argument('--batch_size', type=int, default=1,
+                                help='# threads for loading data') 
+        self.parser.add_argument('--batch_size', type=int, default=8,
                                 help='input batch size')
         self.parser.add_argument('--seq_length', type=int, default=64,
                                 help='sliding window size (number of frames per sequence)')

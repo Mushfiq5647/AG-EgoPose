@@ -6,8 +6,13 @@ from collections import OrderedDict
 class FeatureEncoder(nn.Module):
     PATCH_SIZE = 14  # DINOv2-ViT patch size
 
-    def __init__(self, actionformer_model, embed_size=384):
+    def __init__(self, actionformer_model=None, embed_size=384, skip_temporal=False,
+                 dino_feature='cls'):
         super(FeatureEncoder, self).__init__()
+        self.skip_temporal = skip_temporal
+        # R2 W6 ablation: 'cls' = global CLS token (default), 'patch_mean' =
+        # mean of patch tokens. Same 384-dim, different spatial pooling.
+        self.dino_feature = dino_feature
         # DINOv2-ViT-S/14: self-supervised visual backbone (384-dim CLS token)
         # Frozen — provides domain-general features robust to fisheye distortion
         self.dinov2 = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14')
@@ -31,21 +36,33 @@ class FeatureEncoder(nn.Module):
         return (size // patch_size) * patch_size
 
     def forward(self, images):
+        B, T = images.shape[:2]
+        images_t = images.transpose(0, 1)  # (T, B, 3, H, W)
         feat_block = []
-        images = images.transpose(0, 1)  # (T, B, 3, H, W)
-        for batch in images:  # batch: (B, 3, H, W)
-            # Resize to nearest patch-aligned resolution (e.g. 256 → 252)
+        for batch in images_t:  # batch: (B, 3, H, W)
             H, W = batch.shape[-2:]
             new_H = self._make_divisible(H)
             new_W = self._make_divisible(W)
             if new_H != H or new_W != W:
                 batch = F.interpolate(batch, size=(new_H, new_W), mode='bilinear', align_corners=False)
             with torch.no_grad():
-                features = self.dinov2(batch)  # (B, 384) CLS token
-            features = self.bn(features)
+                if self.dino_feature == 'patch_mean':
+                    # mean-pool patch tokens instead of the global CLS token
+                    out = self.dinov2.forward_features(batch)
+                    features = out['x_norm_patchtokens'].mean(dim=1)  # (B, 384)
+                else:
+                    features = self.dinov2(batch)  # (B, 384) — CLS token
             feat_block.append(features)
 
         feat_block = torch.stack(feat_block, dim=1)  # (B, T, 384)
+
+        # Apply BN over (B*T, 384) to avoid single-sample error when B=1
+        feat_flat = feat_block.reshape(B * T, -1)
+        feat_flat = self.bn(feat_flat)
+        feat_block = feat_flat.reshape(B, T, -1)
+
+        if self.skip_temporal or self.actionformer_model is None:
+            return feat_block  # raw DINOv2 features (B, T, 384)
 
         actionformer_features = self.actionformer_model(feat_block)
         return actionformer_features
@@ -69,7 +86,7 @@ class FeatureEncoder(nn.Module):
     #     print("LSTM output", gcn_outputs.shape)
     #     return outputs
 
-class PoseDecoder(nn.Module):
+class MLPPoseDecoder(nn.Module):
     def __init__(self, motion_dim=384, joint_dim=128, out_dim=3, hidden=256):
         super().__init__()
         self.mlp = nn.Sequential(

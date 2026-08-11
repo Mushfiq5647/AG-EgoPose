@@ -12,7 +12,8 @@ from options.train_options import TrainOptions
 from utils.data_loader import dataloader_full
 from utils.cross_attention_model import HeatmapToJointFeatures
 from utils.cross_attention_model import SpatialJointTransformer
-from utils.cross_attention_model import PoseDecoder
+from utils.cross_attention_model import PoseDecoder, ConcatFusionDecoder
+from utils.model import MLPPoseDecoder
 from heatmaps.network_heatmap import HeatMap_Network
 from utils.loss import LossFuncLimb, LossFuncMPJPE, LossFuncCosSim
 from utils.model import FeatureEncoder
@@ -69,14 +70,27 @@ def get_grad_norm(model, model_name=""):
     return result
 
 
-def main(args):
-    actionformer_feature_extractor = initialize_actionformer(config_file_path=args.config_path)
-    if not os.path.exists(args.model_path):
-        os.makedirs(args.model_path)
+CKPT_BASE = '/data/My_Backup/ag-egopose-ckpt'
 
-    loss_log_path = 'loss_log_finetune_seq64.txt'
+
+def main(args):
+    if args.skip_temporal:
+        actionformer_feature_extractor = None
+        print("ABLATION: Skipping entire temporal stream (DINOv2 + ActionFormer)")
+    else:
+        actionformer_feature_extractor = initialize_actionformer(
+            config_file_path=args.config_path,
+            random_init=args.random_actionformer
+        )
+    # Resolve model_dir early so all path operations use the correct absolute path
+    model_dir = args.model_path if os.path.isabs(args.model_path) else os.path.join(CKPT_BASE, args.model_path)
+    os.makedirs(model_dir, exist_ok=True)
+
+    model_name = os.path.basename(model_dir)
+    loss_log_path = f'loss_log_{model_name}.txt'
     with open(loss_log_path, 'w') as f:
         f.write("Epoch, Train_MPJPE, Train_Cos, Train_Bone, Train_Total, Best_Total \n")
+    print(f"Loss log file: {loss_log_path}")
 
     best_loss = float('inf')
     best_epoch = 0
@@ -111,73 +125,97 @@ def main(args):
         feature_dim=args.hm_embed_dim,
         method='conv_pool'
     ).to(device)
-    encoder = FeatureEncoder(actionformer_feature_extractor).to(device)
+    if args.skip_temporal:
+        encoder = None
+    else:
+        encoder = FeatureEncoder(actionformer_feature_extractor, skip_temporal=False).to(device)
     spatial_joint_transformer = SpatialJointTransformer(
         args.hm_embed_dim,
         num_heads=4,
         num_layers=3
     ).to(device)
-    pose_decoder = PoseDecoder(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
+    if args.mlp_decoder:
+        pose_decoder = MLPPoseDecoder(motion_dim=384, joint_dim=args.hm_embed_dim).to(device)
+        print("ABLATION: Using MLPPoseDecoder (concat + MLP)")
+    elif args.concat_fusion:
+        pose_decoder = ConcatFusionDecoder(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
+        print("ABLATION: Using ConcatFusionDecoder (concat + self-attention)")
+    else:
+        pose_decoder = PoseDecoder(args.hm_embed_dim, num_heads=4, num_layers=3,
+                                   use_mcjq=not args.skip_mcjq).to(device)
+        if args.skip_mcjq:
+            print("ABLATION: Skipping MCJQ — using static learned queries only")
     print("Models initialized")
 
     af_unfrozen_params = []
-    backbone = actionformer_feature_extractor.model.backbone
+    if not args.skip_temporal and not args.freeze_actionformer:
+        backbone = actionformer_feature_extractor.model.backbone
 
-    for p in actionformer_feature_extractor.input_proj.parameters():
-        p.requires_grad = True
-        af_unfrozen_params.append(p)
-
-    for p in backbone.embd.parameters():
-        p.requires_grad = True
-        af_unfrozen_params.append(p)
-    for p in backbone.embd_norm.parameters():
-        p.requires_grad = True
-        af_unfrozen_params.append(p)
-
-    num_branch = len(backbone.branch)
-    print(f"ActionFormer has {num_branch} branch blocks, unfreezing last 2")
-    for blk in backbone.branch[num_branch - 2:]:
-        for p in blk.parameters():
+        for p in actionformer_feature_extractor.input_proj.parameters():
             p.requires_grad = True
             af_unfrozen_params.append(p)
 
-    for p in actionformer_feature_extractor.channel_projector.parameters():
-        p.requires_grad = True
-        af_unfrozen_params.append(p)
+        for p in backbone.embd.parameters():
+            p.requires_grad = True
+            af_unfrozen_params.append(p)
+        for p in backbone.embd_norm.parameters():
+            p.requires_grad = True
+            af_unfrozen_params.append(p)
 
-    print(f"ActionFormer unfrozen params: {sum(p.numel() for p in af_unfrozen_params):,}")
+        num_branch = len(backbone.branch)
+        print(f"ActionFormer has {num_branch} branch blocks, unfreezing last 2")
+        for blk in backbone.branch[num_branch - 2:]:
+            for p in blk.parameters():
+                p.requires_grad = True
+                af_unfrozen_params.append(p)
+
+        for p in actionformer_feature_extractor.channel_projector.parameters():
+            p.requires_grad = True
+            af_unfrozen_params.append(p)
+
+        print(f"ActionFormer unfrozen params: {sum(p.numel() for p in af_unfrozen_params):,}")
+    elif args.freeze_actionformer and not args.skip_temporal:
+        print("ABLATION: ActionFormer fully frozen (no selective unfreeze)")
+    else:
+        print("ActionFormer skipped — no params to unfreeze")
 
     pose_decoder.apply(initialize_gelu_weights)
     spatial_joint_transformer.apply(initialize_gelu_weights)
     heatmap_embedding.apply(initialize_relu_weights)
 
-    print("Loading pre-trained SceneEgo modules for fine-tuning...")
+    print("Loading pre-trained modules for fine-tuning...")
 
-    if os.path.exists(args.encoder_path):
-        print(f"Loading encoder from {args.encoder_path}")
-        encoder.load_state_dict(torch.load(args.encoder_path, map_location=device))
-    else:
-        print(f"Warning: Encoder not found at {args.encoder_path}")
+    # Encoder: only load if temporal stream is active
+    if not args.skip_temporal:
+        if os.path.exists(args.encoder_path):
+            print(f"Loading encoder from {args.encoder_path}")
+            encoder.load_state_dict(torch.load(args.encoder_path, map_location=device))
+        else:
+            raise FileNotFoundError(f"Encoder not found at {args.encoder_path}")
 
+    # Pose decoder: always load (architecture must match — PoseDecoder/ConcatFusion/MLP)
     if os.path.exists(args.decoder_path):
         print(f"Loading pose decoder from {args.decoder_path}")
         pose_decoder.load_state_dict(torch.load(args.decoder_path, map_location=device))
     else:
-        print(f"Warning: Pose decoder not found at {args.decoder_path}")
+        raise FileNotFoundError(f"Pose decoder not found at {args.decoder_path}")
 
-    if os.path.exists(args.heatmap_path):
-        print(f"Loading heatmap embedding from {args.heatmap_path}")
-        heatmap_embedding.load_state_dict(torch.load(args.heatmap_path, map_location=device))
-    else:
-        print(f"Warning: Heatmap embedding not found at {args.heatmap_path}")
+    # Spatial modules: only load if spatial stream is active
+    if not args.skip_spatial:
+        if os.path.exists(args.heatmap_path):
+            print(f"Loading heatmap embedding from {args.heatmap_path}")
+            heatmap_embedding.load_state_dict(torch.load(args.heatmap_path, map_location=device))
+        else:
+            raise FileNotFoundError(f"Heatmap embedding not found at {args.heatmap_path}")
 
-    if os.path.exists(args.spatial_transformer_path):
-        print(f"Loading spatial joint transformer from {args.spatial_transformer_path}")
-        spatial_joint_transformer.load_state_dict(
-            torch.load(args.spatial_transformer_path, map_location=device)
-        )
-    else:
-        print(f"Warning: Spatial joint transformer not found at {args.spatial_transformer_path}")
+        if not args.skip_sjt:
+            if os.path.exists(args.spatial_transformer_path):
+                print(f"Loading spatial joint transformer from {args.spatial_transformer_path}")
+                spatial_joint_transformer.load_state_dict(
+                    torch.load(args.spatial_transformer_path, map_location=device)
+                )
+            else:
+                raise FileNotFoundError(f"Spatial joint transformer not found at {args.spatial_transformer_path}")
 
     print("All fine-tuning modules initialized and loaded")
 
@@ -185,23 +223,31 @@ def main(args):
     mpjpe_loss_func = LossFuncMPJPE().to(device)
     cos_sim_loss_func = LossFuncCosSim().to(device)
 
-    enc_params = sum(p.numel() for p in encoder.parameters() if p.requires_grad)
+    enc_params = 0 if encoder is None else sum(p.numel() for p in encoder.parameters() if p.requires_grad)
     print("encoder trainable params:", enc_params)
 
     af_param_ids = {id(p) for p in af_unfrozen_params}
-    all_other_params = [p for p in (
-        list(encoder.parameters()) +
-        list(heatmap_embedding.parameters()) +
-        list(pose_decoder.parameters()) +
-        list(spatial_joint_transformer.parameters())
-    ) if p.requires_grad and id(p) not in af_param_ids]
+    trainable_modules = [pose_decoder]
+    if not args.skip_temporal:
+        trainable_modules.append(encoder)
+    if not args.skip_spatial:
+        trainable_modules.append(heatmap_embedding)
+        if not args.skip_sjt:
+            trainable_modules.append(spatial_joint_transformer)
+    all_other_params = [p for m in trainable_modules for p in m.parameters()
+                        if p.requires_grad and id(p) not in af_param_ids]
 
     all_trainable_params = all_other_params + af_unfrozen_params
 
-    optimizer = torch.optim.AdamW([
-        {'params': all_other_params, 'lr': args.learning_rate},
-        {'params': af_unfrozen_params, 'lr': args.learning_rate * 0.1}
-    ], weight_decay=args.weight_decay)
+    if af_unfrozen_params:
+        optimizer = torch.optim.AdamW([
+            {'params': all_other_params, 'lr': args.learning_rate},
+            {'params': af_unfrozen_params, 'lr': args.learning_rate * 0.1}
+        ], weight_decay=args.weight_decay)
+    else:
+        optimizer = torch.optim.AdamW(
+            all_other_params, lr=args.learning_rate, weight_decay=args.weight_decay
+        )
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
@@ -212,14 +258,13 @@ def main(args):
     amp_enabled = torch.cuda.is_available()
     scaler = GradScaler(device='cuda', enabled=amp_enabled)
 
-    model_dir = os.path.abspath(args.model_path)
-    os.makedirs(model_dir, exist_ok=True)
     print(f"Checkpoint directory: {model_dir}")
     total_step = len(data_loader)
 
     for epoch in range(args.num_epochs):
         print("Printing epoch:", epoch)
-        encoder.train()
+        if encoder is not None:
+            encoder.train()
         pose_decoder.train()
         heatmap_embedding.train()
         spatial_joint_transformer.train()
@@ -236,28 +281,35 @@ def main(args):
             H_hm, W_hm = 64, 64
             gt_egoposes = batch['gt_local_pose'].to(device)
 
-            with torch.no_grad():
-                all_images_flat = images.view(-1, 3, H_img, W_img)
-                all_heatmaps = net_heatmap(all_images_flat)
-                all_heatmaps = torch.sigmoid(all_heatmaps)
+            if args.skip_temporal:
+                motion_features = torch.zeros(B, T, 384, device=device)
+            else:
+                with autocast(device_type='cuda', enabled=amp_enabled):
+                    motion_features = encoder(images)
+                motion_features = motion_features.float()
 
-            heatmaps = all_heatmaps.detach().view(B, T, 15, H_hm, W_hm)
-            heatmaps.requires_grad_(True)
+            if args.skip_spatial:
+                spatial_joint_features = torch.zeros(B, T, 15, args.hm_embed_dim, device=device)
+            else:
+                with torch.no_grad():
+                    all_images_flat = images.view(-1, 3, H_img, W_img)
+                    all_heatmaps = net_heatmap(all_images_flat)
+                    all_heatmaps = torch.sigmoid(all_heatmaps)
+                heatmaps = all_heatmaps.detach().view(B, T, 15, H_hm, W_hm)
+                heatmaps.requires_grad_(True)
 
-            with autocast(device_type='cuda', enabled=amp_enabled):
-                motion_features = encoder(images)
+                heatmap_features = heatmap_embedding(heatmaps)
+                if args.skip_sjt:
+                    spatial_joint_features = heatmap_features
+                else:
+                    spatial_joint_features = spatial_joint_transformer(heatmap_features)
 
-            motion_features = motion_features.float()
-
-            heatmap_features = heatmap_embedding(heatmaps)
-            spatial_joint_features = spatial_joint_transformer(heatmap_features)
-
-            if i == 0:
-                print(
-                    f"DEBUG: heatmap_features shape={heatmap_features.shape}, "
-                    f"dtype={heatmap_features.dtype}"
-                )
-                print(f"DEBUG: spatial_joint_features shape={spatial_joint_features.shape}")
+                if i == 0:
+                    print(
+                        f"DEBUG: heatmap_features shape={heatmap_features.shape}, "
+                        f"dtype={heatmap_features.dtype}"
+                    )
+                    print(f"DEBUG: spatial_joint_features shape={spatial_joint_features.shape}")
 
             with autocast(device_type='cuda', enabled=amp_enabled):
                 pose_logits = pose_decoder(spatial_joint_features, motion_features)
@@ -293,7 +345,8 @@ def main(args):
             torch.nn.utils.clip_grad_norm_(all_trainable_params, args.clip_value)
 
             if i % args.log_step == 0:
-                print(f'Encoder grad norm: {get_grad_norm(encoder, "Encoder"):.6f}')
+                if encoder is not None:
+                    print(f'Encoder grad norm: {get_grad_norm(encoder, "Encoder"):.6f}')
                 print(f'Decoder grad norm: {get_grad_norm(pose_decoder, "Decoder"):.6f}')
                 print(f'Heatmap grad norm: {get_grad_norm(heatmap_embedding, "Heatmap"):.6f}')
                 print(f'Spatial grad norm: {get_grad_norm(spatial_joint_transformer, "Spatial"):.6f}')
@@ -319,26 +372,29 @@ def main(args):
 
             print(f"New best model! Loss: {best_loss:.4f} (Epoch {best_epoch})")
             torch.save(pose_decoder.state_dict(), os.path.join(model_dir, 'pose-decoder-best.ckpt'))
-            torch.save(encoder.state_dict(), os.path.join(model_dir, 'encoder-best.ckpt'))
-            torch.save(heatmap_embedding.state_dict(), os.path.join(model_dir, 'heatmap_embedding-best.ckpt'))
-            torch.save(
-                spatial_joint_transformer.state_dict(),
-                os.path.join(model_dir, 'spatial_transformer-best.ckpt')
-            )
+            if not args.skip_temporal:
+                torch.save(encoder.state_dict(), os.path.join(model_dir, 'encoder-best.ckpt'))
+            if not args.skip_spatial:
+                torch.save(heatmap_embedding.state_dict(),
+                           os.path.join(model_dir, 'heatmap_embedding-best.ckpt'))
+                if not args.skip_sjt:
+                    torch.save(spatial_joint_transformer.state_dict(),
+                               os.path.join(model_dir, 'spatial_transformer-best.ckpt'))
             print(f"Saved best checkpoints to {model_dir}")
 
         if (epoch + 1) % args.save_interval == 0:
             print(f"Saving periodic checkpoints for epoch {epoch + 1} to {model_dir}")
-            torch.save(pose_decoder.state_dict(), os.path.join(model_dir, f'pose-decoder-{epoch + 1:03d}.ckpt'))
-            torch.save(encoder.state_dict(), os.path.join(model_dir, f'encoder-{epoch + 1:03d}.ckpt'))
-            torch.save(
-                heatmap_embedding.state_dict(),
-                os.path.join(model_dir, f'heatmap_embedding-{epoch + 1:03d}.ckpt')
-            )
-            torch.save(
-                spatial_joint_transformer.state_dict(),
-                os.path.join(model_dir, f'spatial_transformer-{epoch + 1:03d}.ckpt')
-            )
+            torch.save(pose_decoder.state_dict(),
+                       os.path.join(model_dir, f'pose-decoder-{epoch + 1:03d}.ckpt'))
+            if not args.skip_temporal:
+                torch.save(encoder.state_dict(),
+                           os.path.join(model_dir, f'encoder-{epoch + 1:03d}.ckpt'))
+            if not args.skip_spatial:
+                torch.save(heatmap_embedding.state_dict(),
+                           os.path.join(model_dir, f'heatmap_embedding-{epoch + 1:03d}.ckpt'))
+                if not args.skip_sjt:
+                    torch.save(spatial_joint_transformer.state_dict(),
+                               os.path.join(model_dir, f'spatial_transformer-{epoch + 1:03d}.ckpt'))
             print(f"Saved periodic checkpoints for epoch {epoch + 1} to {model_dir}")
 
         print(f"=== Epoch {epoch} Summary ===")
@@ -365,7 +421,8 @@ def main(args):
     print(f"Best model was from epoch {best_epoch} with loss {best_loss:.4f}")
     print("Best model checkpoints saved as:")
     print("  • pose-decoder-best.ckpt")
-    print("  • encoder-best.ckpt")
+    if not args.skip_temporal:
+        print("  • encoder-best.ckpt")
     print("  • heatmap_embedding-best.ckpt")
     print("  • spatial_transformer-best.ckpt")
 
@@ -376,23 +433,24 @@ if __name__ == '__main__':
                         help='path to the config file')
     parser.add_argument('--model_path', type=str, default='./utils/trained_finetuned_sceneego',
                         help='path for saving fine-tuned models')
-    parser.add_argument('--heatmap_trained_path', type=str, required=True,
+    parser.add_argument('--heatmap_trained_path', type=str,
+                        default='/data/My_Backup/ag-egopose-ckpt/trained_heatmaps/bce_combined/heatmap_best.ckpt',
                         help='path for trained 2D heatmap')
     parser.add_argument('--heatmap_backbone', type=str, default='convnext_tiny',
                         choices=['convnext_tiny', 'resnet18', 'resnet34', 'resnet50', 'resnet101'],
                         help='backbone for 2D heatmap network (default: convnext_tiny)')
 
     parser.add_argument('--encoder_path', type=str,
-                        default='utils/trained_egopwtrain_bce_seq64/encoder-032.ckpt',
+                        default='/data/My_Backup/ag-egopose-ckpt/encoder-best.ckpt',
                         help='path for pre-trained encoder')
     parser.add_argument('--decoder_path', type=str,
-                        default='utils/trained_egopwtrain_bce_seq64/pose-decoder-032.ckpt',
+                        default='/data/My_Backup/ag-egopose-ckpt/pose-decoder-best.ckpt',
                         help='path for pre-trained decoder')
     parser.add_argument('--heatmap_path', type=str,
-                        default='utils/trained_egopwtrain_bce_seq64/heatmap_embedding-032.ckpt',
+                        default='/data/My_Backup/ag-egopose-ckpt/heatmap_embedding-best.ckpt',
                         help='path for pre-trained heatmap embedding')
     parser.add_argument('--spatial_transformer_path', type=str,
-                        default='utils/trained_egopwtrain_bce_seq64/spatial_transformer-032.ckpt',
+                        default='/data/My_Backup/ag-egopose-ckpt/spatial_transformer-best.ckpt',
                         help='path for pre-trained spatial transformer')
 
     parser.add_argument('--image_dir', type=str, default='/data/My_Backup/UnrealEgo/scripts/data/UnrealEgoData',
@@ -430,6 +488,24 @@ if __name__ == '__main__':
                         help='step size for saving trained models')
     parser.add_argument('--save_interval', type=int, default=2,
                         help='save checkpoint every N epochs')
+
+    # Ablation flags (must match train.py)
+    parser.add_argument('--skip_temporal', action='store_true',
+                        help='ablation: skip temporal stream (DINOv2 + ActionFormer)')
+    parser.add_argument('--skip_spatial', action='store_true',
+                        help='ablation: skip spatial stream (heatmaps/SJT)')
+    parser.add_argument('--skip_sjt', action='store_true',
+                        help='ablation: skip SpatialJointTransformer')
+    parser.add_argument('--skip_mcjq', action='store_true',
+                        help='ablation: skip Motion-Conditioned Joint Queries')
+    parser.add_argument('--concat_fusion', action='store_true',
+                        help='ablation: concat + self-attention fusion')
+    parser.add_argument('--mlp_decoder', action='store_true',
+                        help='ablation: simple MLP decoder')
+    parser.add_argument('--freeze_actionformer', action='store_true',
+                        help='ablation: keep ActionFormer fully frozen')
+    parser.add_argument('--random_actionformer', action='store_true',
+                        help='ablation: randomly initialized ActionFormer')
 
     args = parser.parse_args()
     print(args)

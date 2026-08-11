@@ -3,9 +3,9 @@ from .base_options import BaseOptions
 class TestOptions(BaseOptions):
     def initialize(self):
         BaseOptions.initialize(self)
-        self.parser.add_argument('--encoder_path', type=str, required=True, help='path for trained encoder')
+        self.parser.add_argument('--encoder_path', type=str, default='', help='path for trained encoder')
         self.parser.add_argument('--decoder_path', type=str, required=True, help='path for trained decoder')
-        self.parser.add_argument('--heatmap_path', type=str, required=True, help='path for trained heatmap embedding')
+        self.parser.add_argument('--heatmap_path', type=str, default='', help='path for trained heatmap embedding')
         self.parser.add_argument('--heatmap_trained_path', type=str, required=True, help='path for trained 2D heatmap')
         self.parser.add_argument('--spatial_transformer_path', type=str, default=None, help='path for trained spatial transformer')
         self.parser.add_argument('--heatmap_backbone', type=str, default='convnext_tiny',
