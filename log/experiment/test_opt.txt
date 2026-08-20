@@ -2,18 +2,18 @@
 ae_hidden_size: 20
 batch_size: 8
 data_dir: /data/My_Backup/UnrealEgo/scripts/data/UnrealEgoData
-decoder_path: /data/My_Backup/ag-egopose-ckpt/egopw-full-model/pose-decoder-best.ckpt
+decoder_path: /data/My_Backup/ag-egopose-ckpt/sceneego-finetune-residual/pose-decoder-020.ckpt
 display_id: 1
 display_port: 8097
 display_single_pane_ncols: 0
 display_winsize: 256
 distributed: False
-encoder_path: /data/My_Backup/ag-egopose-ckpt/egopw-full-model/encoder-best.ckpt
+encoder_path: /data/My_Backup/ag-egopose-ckpt/sceneego-finetune-residual/encoder-020.ckpt
 experiment: False
 experiment_name: experiment
 gpu_ids: [0]
 heatmap_backbone: convnext_tiny
-heatmap_path: /data/My_Backup/ag-egopose-ckpt/egopw-full-model/heatmap_embedding-best.ckpt
+heatmap_path: /data/My_Backup/ag-egopose-ckpt/sceneego-finetune-residual/heatmap_embedding-020.ckpt
 heatmap_trained_path: /data/My_Backup/ag-egopose-ckpt/trained_heatmaps/bce_combined/heatmap_best.ckpt
 init_ImageNet: False
 init_type: kaiming
@@ -21,7 +21,7 @@ isTrain: False
 load_size_heatmap: [64, 64]
 load_size_rgb: [256, 256]
 log_dir: log
-model: egopw
+model: sceneego
 model_name: convnext_tiny
 ntest: inf
 num_heatmap: 15
@@ -34,7 +34,7 @@ save_dir_pose: results
 save_eval_pose: False
 save_eval_pose_freq: 2000
 seq_length: 64
-spatial_transformer_path: /data/My_Backup/ag-egopose-ckpt/egopw-full-model/spatial_transformer-best.ckpt
+spatial_transformer_path: /data/My_Backup/ag-egopose-ckpt/sceneego-finetune-residual/spatial_transformer-020.ckpt
 stride: 64
 use_amp: False
 use_slurm: False

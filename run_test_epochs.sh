@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Usage:
-#   ./run_test_epochs.sh [START_EPOCH] [MODEL_DIR] [ABLATION_FLAG]
+#   ./run_test_epochs.sh [START_EPOCH] [MODEL_DIR] [ABLATION_FLAG] [END_EPOCH] [EXTRA_FLAGS]
 #   MODEL_DIR: relative (resolves under /data/My_Backup/ag-egopose-ckpt/) or absolute
+#   EXTRA_FLAGS: passed through as-is, e.g. for residual_decoder runs:
+#     "--residual_decoder --joint_local heatmap_pool --alpha_mode learned --tokenizer_norm batch --sjt_layers 3"
 # Examples:
 #   ./run_test_epochs.sh 20 egopw-ablation-skip-sjt --skip_sjt
 #   ./run_test_epochs.sh 20 egopw-ablation-skip-temporal --skip_temporal
 #   ./run_test_epochs.sh 20 /data/My_Backup/sceneego-finetune
+#   ./run_test_epochs.sh 10 egopw-3dv-residual-heatmap-pool "" 20 "--residual_decoder --joint_local heatmap_pool --alpha_mode learned --tokenizer_norm batch"
 
 set -euo pipefail
 
@@ -15,6 +18,13 @@ HEATMAP_PATH="${CKPT_BASE}/trained_heatmaps/bce_combined/heatmap_best.ckpt"
 START_EPOCH="${1:-20}"
 MODEL_DIR_ARG="${2:-}"
 ABLATION_FLAG="${3:-}"  # Optional: e.g. --skip_temporal, --skip_spatial, --skip_sjt, --skip_mcjq
+END_EPOCH="${4:-999999}"
+EXTRA_FLAGS="${5:-}"    # Optional: residual_decoder flags etc, must match training
+
+if ! [[ "$END_EPOCH" =~ ^[0-9]+$ ]]; then
+  echo "End epoch must be an integer, got: $END_EPOCH" >&2
+  exit 1
+fi
 
 # Resolve MODEL_DIR: absolute paths used as-is, relative resolved under CKPT_BASE
 if [[ "$MODEL_DIR_ARG" = /* ]]; then
@@ -23,7 +33,7 @@ else
   MODEL_DIR="${CKPT_BASE}/${MODEL_DIR_ARG}"
 fi
 MODEL_NAME="$(basename "$MODEL_DIR")"
-SUMMARY_FILE="test_epoch_summary_from_${START_EPOCH}--${MODEL_NAME}.txt"
+SUMMARY_FILE="test_epoch_summary_${START_EPOCH}-${END_EPOCH}--${MODEL_NAME}.txt"
 
 if ! [[ "$START_EPOCH" =~ ^[0-9]+$ ]]; then
   echo "Start epoch must be an integer, got: $START_EPOCH" >&2
@@ -77,7 +87,7 @@ for checkpoint_path in "${checkpoint_files[@]}"; do
   fi
   epoch="${epoch%.ckpt}"
 
-  if (( 10#$epoch < 10#$START_EPOCH )); then
+  if (( 10#$epoch < 10#$START_EPOCH || 10#$epoch > 10#$END_EPOCH )); then
     continue
   fi
 
@@ -116,7 +126,7 @@ for checkpoint_path in "${checkpoint_files[@]}"; do
     --heatmap_trained_path "$HEATMAP_PATH" \
     --heatmap_path "$heatmap_embedding_path" \
     --spatial_transformer_path "$spatial_transformer_path" \
-    $ABLATION_FLAG)"
+    $ABLATION_FLAG $EXTRA_FLAGS)"
 
   printf "%s\n" "$run_output"
 

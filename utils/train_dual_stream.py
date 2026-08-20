@@ -230,7 +230,7 @@ def main(args):
             _, _, J, H_hm, W_hm = gt_heatmaps.shape
             
             # Get image features for ActionFormer
-            image_features = encoder(images)  # (B, T, embed_feature_dim)
+            image_features, _ = encoder(images)  # (B, T, embed_feature_dim)
             
             # Get heatmaps (predicted or GT)
             if use_predicted_heatmaps:

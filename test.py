@@ -13,6 +13,7 @@ from utils.data_loader import dataloader_full
 from utils.cross_attention_model import HeatmapToJointFeatures
 from utils.cross_attention_model import SpatialJointTransformer
 from utils.cross_attention_model import PoseDecoder, ConcatFusionDecoder
+from utils.cross_attention_model import ResidualPoseDecoder, SpatialStatsExtractor
 from utils.model import MLPPoseDecoder
 from utils.loss import LossFuncMPJPE
 from heatmaps.network_heatmap import HeatMap_Network
@@ -92,26 +93,40 @@ def configure_actionformer_trainable(actionformer_feature_extractor, skip_tempor
 def run_forward(net_heatmap, encoder, heatmap_embedding,
                 spatial_joint_transformer, pose_decoder, images,
                 skip_temporal=False, skip_spatial=False, skip_sjt=False,
-                hm_embed_dim=128):
+                hm_embed_dim=128, residual_decoder=False, stats_extractor=None,
+                return_parts=False):
     """Single forward pass through the full pipeline."""
     B, T, _, H_img, W_img = images.shape
 
+    # Heatmaps first — the joint-local DINO pooling consumes them inside the
+    # encoder (mirrors the ordering in train.py).
+    heatmaps = None
+    if not skip_spatial:
+        all_images_flat = images.view(-1, 3, H_img, W_img)
+        all_heatmaps = torch.sigmoid(net_heatmap(all_images_flat))
+        heatmaps = all_heatmaps.view(B, T, 15, 64, 64)
+
+    joint_local = None
     if skip_temporal:
         motion_features = torch.zeros(B, T, 384, device=images.device)
     else:
-        motion_features = encoder(images)
+        motion_features, joint_local = encoder(images, heatmaps)
 
     if skip_spatial:
         spatial_joint_features = torch.zeros(B, T, 15, hm_embed_dim, device=images.device)
     else:
-        all_images_flat = images.view(-1, 3, H_img, W_img)
-        all_heatmaps = torch.sigmoid(net_heatmap(all_images_flat))
-        heatmaps = all_heatmaps.view(B, T, 15, 64, 64)
         heatmap_features = heatmap_embedding(heatmaps)
         if skip_sjt:
             spatial_joint_features = heatmap_features
         else:
             spatial_joint_features = spatial_joint_transformer(heatmap_features)
+
+    if residual_decoder:
+        spatial_stats = (stats_extractor(heatmaps.float())
+                         if (stats_extractor is not None and heatmaps is not None) else None)
+        out = pose_decoder(spatial_joint_features.float(), motion_features,
+                           joint_local=joint_local, spatial_stats=spatial_stats)
+        return out if return_parts else out['pose']
 
     pose_logits = pose_decoder(spatial_joint_features, motion_features)
     return pose_logits
@@ -362,7 +377,8 @@ def report_params(models):
 
 
 def benchmark(models, sample_images, n_warmup=10, n_runs=50, tag="",
-              skip_temporal=False, skip_spatial=False, skip_sjt=False, hm_embed_dim=128):
+              skip_temporal=False, skip_spatial=False, skip_sjt=False, hm_embed_dim=128,
+              residual_decoder=False, stats_extractor=None):
     """FLOPs + full-pipeline latency + per-module breakdown, for one batch shape."""
     net_heatmap, encoder, heatmap_embedding, sjt, pose_decoder = models
     B, T, _, H, W = sample_images.shape
@@ -371,6 +387,8 @@ def benchmark(models, sample_images, n_warmup=10, n_runs=50, tag="",
         skip_spatial=skip_spatial,
         skip_sjt=skip_sjt,
         hm_embed_dim=hm_embed_dim,
+        residual_decoder=residual_decoder,
+        stats_extractor=stats_extractor,
     )
 
     header = f" Benchmark [B={B}, T={T}] {tag} ".center(62, "=")
@@ -426,12 +444,24 @@ def benchmark(models, sample_images, n_warmup=10, n_runs=50, tag="",
             spatial_joint_features = torch.zeros(B, T, 15, hm_embed_dim, device=sample_images.device)
 
         if not skip_temporal:
-            motion_features = encoder(sample_images)
-            stages.append(('encoder (DINOv2+AF)', lambda: encoder(sample_images)))
+            motion_features, _ = encoder(sample_images, heatmaps if not skip_spatial else None)
+            stages.append(('encoder (DINOv2+AF)',
+                           lambda: encoder(sample_images, heatmaps if not skip_spatial else None)))
         else:
             motion_features = torch.zeros(B, T, 384, device=sample_images.device)
 
-    stages.append(('pose_decoder', lambda: pose_decoder(spatial_joint_features, motion_features)))
+    if residual_decoder:
+        _stats = (stats_extractor(heatmaps.float())
+                  if (stats_extractor is not None and not skip_spatial) else None)
+        _local = None
+        if not skip_temporal:
+            with torch.no_grad():
+                _, _local = encoder(sample_images, heatmaps if not skip_spatial else None)
+        stages.append(('pose_decoder', lambda: pose_decoder(
+            spatial_joint_features.float(), motion_features,
+            joint_local=_local, spatial_stats=_stats)))
+    else:
+        stages.append(('pose_decoder', lambda: pose_decoder(spatial_joint_features, motion_features)))
 
     print(f"\nPer-module latency (batch shape B={B}, T={T}):")
     stage_total = 0.0
@@ -489,11 +519,24 @@ def main(args):
 
     # ── Models ───────────────────────────────────────────────────────
     net_heatmap = HeatMap_Network(opt, model_name=args.heatmap_backbone).to(device)
-    heatmap_embedding = HeatmapToJointFeatures(heatmap_size=64, feature_dim=args.hm_embed_dim, method='conv_pool').to(device)
+    heatmap_embedding = HeatmapToJointFeatures(heatmap_size=64, feature_dim=args.hm_embed_dim,
+                                               method='conv_pool', norm=args.tokenizer_norm).to(device)
     encoder = FeatureEncoder(actionformer_feature_extractor, skip_temporal=args.skip_temporal,
-                             dino_feature=args.dino_feature).to(device)
-    spatial_joint_transformer = SpatialJointTransformer(args.hm_embed_dim, num_heads=4, num_layers=3).to(device)
-    if args.mlp_decoder:
+                             dino_feature=args.dino_feature, joint_local=args.joint_local).to(device)
+    sjt_layers = 0 if args.skip_sjt else args.sjt_layers
+    args.skip_sjt = (sjt_layers == 0)
+    spatial_joint_transformer = SpatialJointTransformer(
+        args.hm_embed_dim, num_heads=4, num_layers=max(sjt_layers, 1)).to(device)
+    stats_extractor = SpatialStatsExtractor(heatmap_size=64).to(device)
+    if args.residual_decoder:
+        pose_decoder = ResidualPoseDecoder(
+            joint_dim=args.hm_embed_dim, motion_dim=384, local_dim=384,
+            num_joints=num_joints, num_heads=4,
+            use_joint_local=(args.joint_local != 'none'),
+            alpha_mode=args.alpha_mode,
+        ).to(device)
+        print(f"ResidualPoseDecoder: joint_local={args.joint_local}, alpha_mode={args.alpha_mode}")
+    elif args.mlp_decoder:
         pose_decoder = MLPPoseDecoder(motion_dim=384, joint_dim=args.hm_embed_dim).to(device)
         print("ABLATION: Using MLPPoseDecoder (concat + MLP, no transformer/attention)")
     elif args.concat_fusion:
@@ -525,15 +568,24 @@ def main(args):
         if not args.skip_sjt:
             spatial_joint_transformer.load_state_dict(torch.load(args.spatial_transformer_path, map_location=device))
 
-    for m in (net_heatmap, encoder, pose_decoder, heatmap_embedding, spatial_joint_transformer):
+    for m in (net_heatmap, encoder, pose_decoder, heatmap_embedding, spatial_joint_transformer,
+              stats_extractor):
         m.eval()
+    if args.heatmap_tokenizer_bn_batch_stats:
+        print("DIAGNOSTIC: heatmap tokenizer BatchNorm2d layers use test-batch stats")
+        for m in heatmap_embedding.modules():
+            if isinstance(m, torch.nn.BatchNorm2d):
+                m.train()
+                m.momentum = 0.0
     for p in net_heatmap.parameters():
         p.requires_grad = False
 
     models = (net_heatmap, encoder, heatmap_embedding, spatial_joint_transformer, pose_decoder)
 
     ablation_kwargs = dict(skip_temporal=args.skip_temporal, skip_spatial=getattr(args, 'skip_spatial', False),
-                           skip_sjt=getattr(args, 'skip_sjt', False), hm_embed_dim=args.hm_embed_dim)
+                           skip_sjt=getattr(args, 'skip_sjt', False), hm_embed_dim=args.hm_embed_dim,
+                           residual_decoder=args.residual_decoder,
+                           stats_extractor=stats_extractor if args.residual_decoder else None)
 
     # ── Benchmark (optional) ──────────────────────────────────────────
     if args.run_benchmark:
@@ -668,7 +720,7 @@ if __name__ == '__main__':
     parser.add_argument('--hidden_size', type=int, default=512)
     parser.add_argument('--num_layers', type=int, default=2)
     parser.add_argument('--seq_length', type=int, default=16)
-    parser.add_argument('--stride', type=int, default=16)
+    parser.add_argument('--stride', type=int, default=64)
 
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--num_workers', type=int, default=0)
@@ -718,6 +770,25 @@ if __name__ == '__main__':
     parser.add_argument('--dino_feature', type=str, default='cls',
                         choices=['cls', 'patch_mean'],
                         help='R2 W6 ablation: DINOv2 CLS token vs mean-pooled patch tokens')
+
+    # ── 3DV revision (must match the flags the checkpoint was trained with) ──
+    parser.add_argument('--joint_local', type=str, default='none',
+                        choices=['none', 'cls', 'patch_mean', 'heatmap_pool'],
+                        help='per-joint DINO descriptor L_{t,j}; must match training')
+    parser.add_argument('--residual_decoder', action='store_true',
+                        help='evaluate a ResidualPoseDecoder checkpoint')
+    parser.add_argument('--alpha_mode', type=str, default='learned',
+                        choices=['learned', 'fixed', 'ones'],
+                        help='alpha source; must match training')
+    parser.add_argument('--sjt_layers', type=int, default=3,
+                        help='SpatialJointTransformer depth; must match training')
+    parser.add_argument('--tokenizer_norm', type=str, default='group',
+                        choices=['group', 'batch'],
+                        help='heatmap tokenizer norm; must match training '
+                             '("batch" for pre-GroupNorm-fix checkpoints)')
+    parser.add_argument('--heatmap_tokenizer_bn_batch_stats', action='store_true',
+                        help='diagnostic only: for BatchNorm heatmap tokenizers, use '
+                             'current test-batch stats instead of stored running stats')
 
     args = parser.parse_args()
     main(args)

@@ -173,7 +173,7 @@ class Mo2Cap2WindowDataset(torch.utils.data.Dataset):
 
         return {
             'input_rgb':    imgs,   # (T,3,H,W)
-            # 'gt_heatmap':   hms,    # (T,J,32,32)
+            'gt_heatmap':   hms,    # (T,J,32,32)
             'gt_local_pose':poses   # (T,J,3)
         }
 
@@ -239,10 +239,11 @@ class EgoPwWindowDataset(torch.utils.data.Dataset):
         seq_idx, start = self.index[idx]
         img_paths = self.sequences[seq_idx]
         gt_map = self.gt_dicts[seq_idx]
+        seq_root = self.sequence_roots[seq_idx]
 
         window = img_paths[start:start + self.window_size]
 
-        imgs, poses = [], []
+        imgs, poses, hms = [], [], []
         for p in window:
             name = os.path.basename(p)
             info = gt_map[name]
@@ -257,13 +258,21 @@ class EgoPwWindowDataset(torch.utils.data.Dataset):
                 img = self.transform(img)
             imgs.append(img)
 
+            # Load GT heatmap (same img_/heatmap_ naming as EgoGlobalTestDataset)
+            base = os.path.splitext(name)[0]
+            suffix = base[len("img_"):] if base.startswith("img_") else base
+            hm = np.load(os.path.join(seq_root, 'heatmap64_2.0', f'heatmap_{suffix}.npy'))
+            hms.append(torch.from_numpy(hm.astype(np.float32)))
+
         # Stack into tensors
         img_batch  = torch.stack(imgs,  dim=0)   # (T,3,H,W)
         pose_batch = torch.stack(poses, dim=0)   # (T,J,3)
+        hm_batch   = torch.stack(hms,   dim=0)   # (T,J,64,64)
 
         return {
             'input_rgb':     img_batch,
             'gt_local_pose': pose_batch,
+            'gt_heatmap':    hm_batch,
             'sequence_folder': self.sequence_roots[seq_idx]
         }
 
@@ -349,10 +358,11 @@ class SceneEgoWindowDataset(torch.utils.data.Dataset):
         seq_idx, start = self.index[idx]
         img_paths = self.sequences[seq_idx]
         gt_map = self.gt_dicts[seq_idx]
+        seq_root = self.sequence_roots[seq_idx]
 
         window = img_paths[start:start + self.window_size]
 
-        imgs, poses = [], []
+        imgs, poses, hms = [], [], []
         for p in window:
             name = os.path.basename(p)
             info = gt_map[name]
@@ -367,13 +377,21 @@ class SceneEgoWindowDataset(torch.utils.data.Dataset):
                 img = self.transform(img)
             imgs.append(img)
 
+            # Load GT heatmap (same img_/heatmap_ naming as EgoGlobalTestDataset)
+            base = os.path.splitext(name)[0]
+            suffix = base[len("img_"):] if base.startswith("img_") else base
+            hm = np.load(os.path.join(seq_root, 'heatmap64_2.0', f'heatmap_{suffix}.npy'))
+            hms.append(torch.from_numpy(hm.astype(np.float32)))
+
         # Stack into tensors
         img_batch  = torch.stack(imgs,  dim=0)   # (T,3,H,W)
         pose_batch = torch.stack(poses, dim=0)   # (T,J,3)
+        hm_batch   = torch.stack(hms,   dim=0)   # (T,J,64,64)
 
         return {
             'input_rgb':     img_batch,
             'gt_local_pose': pose_batch,
+            'gt_heatmap':    hm_batch,
             'sequence_folder': self.sequence_roots[seq_idx]
         }
 
@@ -428,7 +446,7 @@ class EgoGTAWindowDataset(torch.utils.data.Dataset):
         img_paths, pose_arr = self.sequences[seq_idx]
 
         window_imgs = img_paths[start:start + self.window_size]
-        # window_hms  = hm_paths[start:start + self.window_size]
+        window_hms  = hm_paths[start:start + self.window_size]
         window_poses = pose_arr[start:start + self.window_size]  # (T, J, 3)
 
         imgs, hms, poses = [], [], []
@@ -522,7 +540,7 @@ class UnrealEgoWindowDataset(torch.utils.data.Dataset):
                 input_rgb_left = self.transform(input_rgb_left)
                 input_rgb_right = self.transform(input_rgb_right)
             gt_heatmap_left = torch.from_numpy(frame_data["gt_heatmap_left"]).float()
-            gt_heatmap_right = torch.from_numpy(frame_data["gt_heatmap_right"]) float()
+            gt_heatmap_right = torch.from_numpy(frame_data["gt_heatmap_right"]).float()
             gt_local_pose = torch.from_numpy(frame_data["gt_local_pose"]).float()
             imgs_left.append(input_rgb_left)
             imgs_right.append(input_rgb_right)
@@ -572,9 +590,9 @@ class EgoGlobalTestDataset(torch.utils.data.Dataset):
             img_paths = [os.path.join(img_dir, f) for f in img_files]
 
             # list and sort corresponding heatmap files
-            # hm_dir = os.path.join(base, 'heatmaps')
-            # hm_files = [f.replace('.jpg', '_heatmaps.npy') for f in img_files]
-            # hm_paths = [os.path.join(hm_dir, f) for f in hm_files]
+            hm_dir = os.path.join(base, 'heatmaps')
+            hm_files = [f.replace('.jpg', '_heatmaps.npy') for f in img_files]
+            hm_paths = [os.path.join(hm_dir, f) for f in hm_files]
 
             # load pose numpy array
             seq_name = os.path.basename(base.rstrip('/'))
@@ -611,9 +629,9 @@ class EgoGlobalTestDataset(torch.utils.data.Dataset):
         img_paths, pose_arr = self.sequences[seq_idx]
 
         window_imgs = img_paths[start:start + self.window_size]
-        # window_hms  = hm_paths[start:start + self.window_size]
+        window_hms  = hm_paths[start:start + self.window_size]
         window_poses = pose_arr[start:start + self.window_size]  # (T, J, 3)
-
+# 
         imgs, hms, poses = [], [], []
         for img_path, pose in zip(window_imgs, window_poses):
             name = os.path.basename(img_path)
@@ -635,12 +653,12 @@ class EgoGlobalTestDataset(torch.utils.data.Dataset):
             poses.append(torch.from_numpy(pose).float())
 
         img_batch  = torch.stack(imgs, dim=0)      # (T,3,H,W)
-        # hm_batch   = torch.stack(hms,  dim=0)      # (T,J,H,W)
+        hm_batch   = torch.stack(hms,  dim=0)      # (T,J,H,W)
         pose_batch = torch.stack(poses, dim=0)     # (T,J,3)
 
         return {
             'input_rgb':    img_batch,
-            # 'gt_heatmap':   hm_batch,
+            'gt_heatmap':   hm_batch,
             'gt_local_pose':pose_batch
         }
 

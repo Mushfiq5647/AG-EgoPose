@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -21,12 +23,27 @@ class JointIDEncoding(nn.Module):
         return self.ln(y)
 
 
+def _norm2d(channels, norm='group'):
+    """Normalization for the heatmap tokenizer.
+
+    Sigmoid heatmaps are sparse and near-zero over most of the map, so
+    BatchNorm's running statistics drift badly between train and eval and
+    produce a large train/test discrepancy. GroupNorm has no running stats
+    and removes that dependency. 'batch' is kept only to load legacy
+    checkpoints trained before the switch.
+    """
+    if norm == 'batch':
+        return nn.BatchNorm2d(channels)
+    return nn.GroupNorm(min(8, channels), channels)
+
+
 class HeatmapToJointFeatures(nn.Module):
-    def __init__(self, heatmap_size=64, feature_dim=128, method='conv_pool'):
+    def __init__(self, heatmap_size=64, feature_dim=128, method='conv_pool', norm='group'):
         super(HeatmapToJointFeatures, self).__init__()
         self.method = method
         self.feature_dim = feature_dim
-        
+        self.norm = norm
+
         if method == 'adaptive_pool':
             # Simple adaptive pooling
             self.pool = nn.AdaptiveAvgPool2d((1, 1))
@@ -49,13 +66,13 @@ class HeatmapToJointFeatures(nn.Module):
             # GELU + BatchNorm prevent dead neurons (ReLU kills gradients on sigmoid heatmap inputs)
             self.conv_layers = nn.Sequential(
                 nn.Conv2d(1, 16, 3, padding=1),       # 64x64 -> 64x64
-                nn.BatchNorm2d(16),
+                _norm2d(16, norm),
                 nn.GELU(),
                 nn.Conv2d(16, 32, 3, stride=2, padding=1),  # 64x64 -> 32x32
-                nn.BatchNorm2d(32),
+                _norm2d(32, norm),
                 nn.GELU(),
                 nn.Conv2d(32, 64, 3, stride=2, padding=1),  # 32x32 -> 16x16
-                nn.BatchNorm2d(64),
+                _norm2d(64, norm),
                 nn.GELU(),
                 nn.AdaptiveAvgPool2d((4, 4))           # 16x16 -> 4x4
             )
@@ -212,6 +229,242 @@ class SpatialJointTransformer(nn.Module):
         enhanced_joints = enhanced_joints.view(B, T, J, feature_dim)
 
         return enhanced_joints
+
+
+class HeatmapGuidedPatchPooling(nn.Module):
+    """Per-joint visual descriptors pooled from DINOv2 patch tokens.
+
+    The BMVC model fed ActionFormer a single global CLS token per frame, so
+    per-joint spatial location was pooled away before any temporal module
+    ran. Here the predicted 2D heatmap is reused as an attention map over
+    the DINO patch grid:
+
+        w_{t,j,p} = softmax_p(beta * H_{t,j,p})
+        L_{t,j}   = sum_p w_{t,j,p} * d_{t,p}
+
+    Modes (ablation, Sec. 29.2 of the revision plan):
+      'heatmap_pool' — the proposal; weights come from the joint's heatmap.
+      'patch_mean'   — uniform weights, same features, no localization.
+      'cls'          — CLS token broadcast to every joint (BMVC behaviour).
+
+    'patch_mean' and 'cls' are the controls that decide whether any gain is
+    due to *locality* or merely to feeding more DINO features to the decoder.
+    """
+
+    def __init__(self, dim=384, mode='heatmap_pool', beta_init=10.0):
+        super().__init__()
+        assert mode in ('heatmap_pool', 'patch_mean', 'cls')
+        self.mode = mode
+        self.dim = dim
+        # beta kept in log-space so it stays positive under unconstrained SGD
+        self.log_beta = nn.Parameter(torch.tensor(math.log(beta_init)))
+        self.layer_norm = nn.LayerNorm(dim)
+
+    def forward(self, patch_tokens, heatmaps, cls_token=None):
+        """
+        Args:
+            patch_tokens: (B, N, dim) — DINOv2 patch tokens for ONE frame,
+                          N must be a square grid (e.g. 18x18 = 324).
+            heatmaps:     (B, J, H, W) — sigmoid heatmaps for the same frame.
+            cls_token:    (B, dim) — required only for mode='cls'.
+        Returns:
+            joint_local:  (B, J, dim)
+        """
+        B, J = heatmaps.shape[0], heatmaps.shape[1]
+
+        # This runs inside the encoder's autocast region while log_beta and the
+        # LayerNorm weights are float32. Mixing fp16 activations with fp32
+        # parameters silently breaks gradient flow (the PJTT/AIVE failure), so
+        # the whole block is forced to fp32 — softmax over 324 patches is more
+        # stable there anyway, and one frame of patches is only a few MB.
+        patch_tokens = patch_tokens.float()
+        heatmaps = heatmaps.float()
+
+        if self.mode == 'cls':
+            assert cls_token is not None, "mode='cls' needs the CLS token"
+            out = cls_token.float().unsqueeze(1).expand(-1, J, -1)
+            return self.layer_norm(out)
+
+        if self.mode == 'patch_mean':
+            out = patch_tokens.mean(dim=1, keepdim=True).expand(-1, J, -1)
+            return self.layer_norm(out)
+
+        # ── heatmap-guided pooling ────────────────────────────────────
+        N = patch_tokens.shape[1]
+        g = int(round(N ** 0.5))
+        if g * g != N:
+            raise ValueError(f"patch grid is not square: N={N}")
+
+        # Average heatmap mass inside each patch footprint (64x64 -> g x g).
+        hm = F.adaptive_avg_pool2d(heatmaps.reshape(B * J, 1, *heatmaps.shape[-2:]),
+                                   (g, g))
+        hm = hm.reshape(B, J, g * g)
+
+        w = F.softmax(self.log_beta.exp() * hm, dim=-1)      # (B, J, N)
+        joint_local = torch.bmm(w, patch_tokens)             # (B, J, dim)
+        return self.layer_norm(joint_local)
+
+
+class UncertaintyAlpha(nn.Module):
+    """How much temporal correction the spatial estimate needs.
+
+        alpha_{t,j} = sigmoid(f_u(u_{t,j}))
+
+    u is the 8-dim heatmap statistic vector from SpatialStatsExtractor
+    (soft-argmax x/y, var_x, var_y, cov, entropy, peak, top2 gap). This
+    replaces the two-expert visibility gate: alpha scales a *correction*
+    rather than selecting between two full pose estimates, so a collapsed
+    alpha degrades to the spatial model instead of routing to a weaker one.
+
+    Modes:
+      'learned' — the proposal, per-joint per-frame from heatmap stats.
+      'fixed'   — one learnable global scalar; isolates whether conditioning
+                  on uncertainty matters at all.
+      'ones'    — alpha == 1 everywhere; pure unweighted residual.
+    """
+
+    def __init__(self, num_stats=8, hidden=32, mode='learned'):
+        super().__init__()
+        assert mode in ('learned', 'fixed', 'ones')
+        self.mode = mode
+        if mode == 'learned':
+            self.f_u = nn.Sequential(
+                nn.Linear(num_stats, hidden),
+                nn.GELU(),
+                nn.Linear(hidden, 1),
+            )
+            # start at alpha = 0.5 exactly: spatial estimate and correction
+            # both carry gradient from step 0
+            nn.init.zeros_(self.f_u[-1].weight)
+            nn.init.zeros_(self.f_u[-1].bias)
+        elif mode == 'fixed':
+            self.logit = nn.Parameter(torch.zeros(1))
+
+    def forward(self, stats):
+        """
+        Args:
+            stats: (B, T, J, num_stats)
+        Returns:
+            alpha: (B, T, J, 1)
+        """
+        if self.mode == 'ones':
+            return torch.ones(*stats.shape[:3], 1, device=stats.device, dtype=stats.dtype)
+        if self.mode == 'fixed':
+            a = torch.sigmoid(self.logit)
+            return a.view(1, 1, 1, 1).expand(*stats.shape[:3], 1)
+        return torch.sigmoid(self.f_u(stats))
+
+
+class ResidualPoseDecoder(nn.Module):
+    """Uncertainty-conditioned residual refinement of a spatial pose.
+
+        Q_{t,j}       = proj([S_{t,j} ; L_{t,j}])
+        P^sp_{t,j}    = head_sp(Q_{t,j})
+        C_{t,j}       = CrossAttn(Q = Q_{t,j}, K = V = A_{1:T})
+        dP_{t,j}      = f_delta([C ; S ; L])
+        P_{t,j}       = P^sp_{t,j} + alpha_{t,j} * dP_{t,j}
+
+    Deliberately shallow — one cross-attention layer and one MLP, no stacked
+    generic transformer. The temporal branch never reconstructs a pose on its
+    own; it only answers what correction the action context implies.
+
+    P^sp is supervised directly (see --lambda_spatial). Without that the
+    split is a pure reparameterization of a sum and alpha means nothing.
+    """
+
+    def __init__(self, joint_dim=128, motion_dim=384, local_dim=384,
+                 num_joints=15, num_heads=4, num_stats=8,
+                 use_joint_local=True, alpha_mode='learned'):
+        super().__init__()
+        self.num_joints = num_joints
+        self.use_joint_local = use_joint_local
+
+        # joint-local DINO descriptor -> joint token width
+        if use_joint_local:
+            self.local_proj = nn.Sequential(
+                nn.Linear(local_dim, joint_dim),
+                nn.GELU(),
+            )
+        q_in = joint_dim * 2 if use_joint_local else joint_dim
+        self.query_proj = nn.Linear(q_in, joint_dim)
+        self.query_norm = nn.LayerNorm(joint_dim)
+
+        # spatial-only pose head (current-frame evidence only)
+        self.spatial_head = nn.Sequential(
+            nn.Linear(joint_dim, joint_dim),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(joint_dim, 3),
+        )
+
+        # per-joint cross-attention over the ActionFormer sequence
+        self.motion_kv_proj = nn.Linear(motion_dim, joint_dim)
+        self.cross_attn = nn.MultiheadAttention(joint_dim, num_heads=num_heads,
+                                                batch_first=True)
+        self.cross_norm = nn.LayerNorm(joint_dim)
+
+        # residual head
+        delta_in = joint_dim * (3 if use_joint_local else 2)
+        self.delta_head = nn.Sequential(
+            nn.Linear(delta_in, joint_dim),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(joint_dim, 3),
+        )
+        # correction starts at zero so training begins from the spatial model
+        nn.init.zeros_(self.delta_head[-1].weight)
+        nn.init.zeros_(self.delta_head[-1].bias)
+
+        self.alpha = UncertaintyAlpha(num_stats=num_stats, mode=alpha_mode)
+
+    def forward(self, spatial_joint_features, motion_features,
+                joint_local=None, spatial_stats=None):
+        """
+        Args:
+            spatial_joint_features: (B, T, J, joint_dim)     S
+            motion_features:        (B, T, motion_dim)       A_{1:T}
+            joint_local:            (B, T, J, local_dim)     L   (or None)
+            spatial_stats:          (B, T, J, num_stats)     u   (or None)
+        Returns:
+            dict with 'pose', 'pose_spatial', 'delta', 'alpha'
+        """
+        B, T, J, D = spatial_joint_features.shape
+        S = spatial_joint_features
+
+        if self.use_joint_local:
+            if joint_local is None:
+                raise ValueError("use_joint_local=True but joint_local is None")
+            L = self.local_proj(joint_local)                  # (B,T,J,D)
+            q = self.query_proj(torch.cat([S, L], dim=-1))
+        else:
+            L = None
+            q = self.query_proj(S)
+        q = self.query_norm(q)
+
+        # ── spatial-only estimate ─────────────────────────────────────
+        pose_spatial = self.spatial_head(q)                   # (B,T,J,3)
+
+        # ── temporal context per joint ────────────────────────────────
+        # (B,T,J,D) -> (B*J,T,D): each joint reads its own temporal context
+        q_seq = q.permute(0, 2, 1, 3).reshape(B * J, T, D)
+        kv = self.motion_kv_proj(motion_features)             # (B,T,D)
+        kv = kv.unsqueeze(1).expand(-1, J, -1, -1).reshape(B * J, T, D)
+        ctx, _ = self.cross_attn(q_seq, kv, kv)
+        ctx = self.cross_norm(ctx + q_seq)
+        C = ctx.view(B, J, T, D).permute(0, 2, 1, 3)          # (B,T,J,D)
+
+        # ── residual correction ───────────────────────────────────────
+        delta_in = [C, S, L] if self.use_joint_local else [C, S]
+        delta = self.delta_head(torch.cat(delta_in, dim=-1))   # (B,T,J,3)
+
+        if spatial_stats is None:
+            alpha = torch.ones(B, T, J, 1, device=S.device, dtype=S.dtype)
+        else:
+            alpha = self.alpha(spatial_stats)                  # (B,T,J,1)
+
+        pose = pose_spatial + alpha * delta
+        return {'pose': pose, 'pose_spatial': pose_spatial,
+                'delta': delta, 'alpha': alpha}
 
 
 class PerJointTrajectoryTokens(nn.Module):

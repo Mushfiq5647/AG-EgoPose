@@ -13,6 +13,7 @@ from utils.data_loader import dataloader_full
 from utils.cross_attention_model import HeatmapToJointFeatures
 from utils.cross_attention_model import SpatialJointTransformer
 from utils.cross_attention_model import PoseDecoder, ConcatFusionDecoder
+from utils.cross_attention_model import ResidualPoseDecoder, SpatialStatsExtractor
 from utils.model import MLPPoseDecoder
 from heatmaps.network_heatmap import HeatMap_Network
 from utils.loss import LossFuncLimb, LossFuncMPJPE, LossFuncCosSim
@@ -123,18 +124,32 @@ def main(args):
     heatmap_embedding = HeatmapToJointFeatures(
         heatmap_size=64,
         feature_dim=args.hm_embed_dim,
-        method='conv_pool'
+        method='conv_pool',
+        norm=args.tokenizer_norm
     ).to(device)
     if args.skip_temporal:
         encoder = None
     else:
-        encoder = FeatureEncoder(actionformer_feature_extractor, skip_temporal=False).to(device)
+        encoder = FeatureEncoder(actionformer_feature_extractor, skip_temporal=False,
+                                 joint_local=args.joint_local).to(device)
+    sjt_layers = 0 if args.skip_sjt else args.sjt_layers
+    args.skip_sjt = (sjt_layers == 0)
     spatial_joint_transformer = SpatialJointTransformer(
         args.hm_embed_dim,
         num_heads=4,
-        num_layers=3
+        num_layers=max(sjt_layers, 1)
     ).to(device)
-    if args.mlp_decoder:
+    stats_extractor = SpatialStatsExtractor(heatmap_size=64).to(device)
+    if args.residual_decoder:
+        pose_decoder = ResidualPoseDecoder(
+            joint_dim=args.hm_embed_dim, motion_dim=384, local_dim=384,
+            num_joints=num_joints, num_heads=4,
+            use_joint_local=(args.joint_local != 'none'),
+            alpha_mode=args.alpha_mode,
+        ).to(device)
+        print(f"ResidualPoseDecoder: joint_local={args.joint_local}, "
+              f"alpha_mode={args.alpha_mode}, lambda_spatial={args.lambda_spatial}")
+    elif args.mlp_decoder:
         pose_decoder = MLPPoseDecoder(motion_dim=384, joint_dim=args.hm_embed_dim).to(device)
         print("ABLATION: Using MLPPoseDecoder (concat + MLP)")
     elif args.concat_fusion:
@@ -179,7 +194,12 @@ def main(args):
     else:
         print("ActionFormer skipped — no params to unfreeze")
 
-    pose_decoder.apply(initialize_gelu_weights)
+    if not args.residual_decoder:
+        # ResidualPoseDecoder zero-inits its own delta_head/alpha.f_u for the
+        # P == P_spatial warm start; a blanket xavier apply() would overwrite
+        # that. Harmless here if a checkpoint is loaded below anyway, but not
+        # if this ever trains a residual decoder from scratch.
+        pose_decoder.apply(initialize_gelu_weights)
     spatial_joint_transformer.apply(initialize_gelu_weights)
     heatmap_embedding.apply(initialize_relu_weights)
 
@@ -281,16 +301,10 @@ def main(args):
             H_hm, W_hm = 64, 64
             gt_egoposes = batch['gt_local_pose'].to(device)
 
-            if args.skip_temporal:
-                motion_features = torch.zeros(B, T, 384, device=device)
-            else:
-                with autocast(device_type='cuda', enabled=amp_enabled):
-                    motion_features = encoder(images)
-                motion_features = motion_features.float()
-
-            if args.skip_spatial:
-                spatial_joint_features = torch.zeros(B, T, 15, args.hm_embed_dim, device=device)
-            else:
+            # Heatmaps first: the joint-local DINO pooling consumes them
+            # inside the encoder (same ordering as train.py).
+            heatmaps = None
+            if not args.skip_spatial:
                 with torch.no_grad():
                     all_images_flat = images.view(-1, 3, H_img, W_img)
                     all_heatmaps = net_heatmap(all_images_flat)
@@ -298,6 +312,19 @@ def main(args):
                 heatmaps = all_heatmaps.detach().view(B, T, 15, H_hm, W_hm)
                 heatmaps.requires_grad_(True)
 
+            joint_local = None
+            if args.skip_temporal:
+                motion_features = torch.zeros(B, T, 384, device=device)
+            else:
+                with autocast(device_type='cuda', enabled=amp_enabled):
+                    motion_features, joint_local = encoder(images, heatmaps)
+                motion_features = motion_features.float()
+                if joint_local is not None:
+                    joint_local = joint_local.float()
+
+            if args.skip_spatial:
+                spatial_joint_features = torch.zeros(B, T, 15, args.hm_embed_dim, device=device)
+            else:
                 heatmap_features = heatmap_embedding(heatmaps)
                 if args.skip_sjt:
                     spatial_joint_features = heatmap_features
@@ -311,31 +338,64 @@ def main(args):
                     )
                     print(f"DEBUG: spatial_joint_features shape={spatial_joint_features.shape}")
 
-            with autocast(device_type='cuda', enabled=amp_enabled):
-                pose_logits = pose_decoder(spatial_joint_features, motion_features)
-                final = pose_logits.view(B, T, num_joints, 3).float()
+            spatial_loss = None
+            alpha_stat = None
+            if args.residual_decoder:
+                # outside autocast — fp32 params against fp16 stream activations
+                # is the pattern that silently killed cross-stream gradients
+                spatial_stats = (stats_extractor(heatmaps.float())
+                                 if heatmaps is not None else None)
+                out = pose_decoder(spatial_joint_features.float(), motion_features,
+                                   joint_local=joint_local, spatial_stats=spatial_stats)
+                final = out['pose'].view(B, T, num_joints, 3).float()
+                alpha_stat = out['alpha']
 
                 final_reshaped = final.reshape(B * T, num_joints, 3)
                 gt_reshaped = gt_egoposes.reshape(B * T, num_joints, 3)
-
                 mpjpe_loss = mpjpe_loss_func(final_reshaped, gt_reshaped)
                 bone_length_loss = limb_loss_func(final_reshaped, gt_reshaped)
                 cos_loss = cos_sim_loss_func(final_reshaped, gt_reshaped)
+                spatial_loss = mpjpe_loss_func(
+                    out['pose_spatial'].reshape(B * T, num_joints, 3).float(), gt_reshaped)
 
                 final_loss = (
                     opt.lambda_mpjpe * mpjpe_loss +
                     opt.lambda_cos_sim * cos_loss +
-                    opt.lambda_bone_length * bone_length_loss
+                    opt.lambda_bone_length * bone_length_loss +
+                    args.lambda_spatial * spatial_loss
                 )
+            else:
+                with autocast(device_type='cuda', enabled=amp_enabled):
+                    pose_logits = pose_decoder(spatial_joint_features, motion_features)
+                    final = pose_logits.view(B, T, num_joints, 3).float()
+
+                    final_reshaped = final.reshape(B * T, num_joints, 3)
+                    gt_reshaped = gt_egoposes.reshape(B * T, num_joints, 3)
+
+                    mpjpe_loss = mpjpe_loss_func(final_reshaped, gt_reshaped)
+                    bone_length_loss = limb_loss_func(final_reshaped, gt_reshaped)
+                    cos_loss = cos_sim_loss_func(final_reshaped, gt_reshaped)
+
+                    final_loss = (
+                        opt.lambda_mpjpe * mpjpe_loss +
+                        opt.lambda_cos_sim * cos_loss +
+                        opt.lambda_bone_length * bone_length_loss
+                    )
 
             train_mpjpe_losses.append(mpjpe_loss.item())
             train_cos_losses.append(cos_loss.item())
             train_bone_losses.append(bone_length_loss.item())
             train_total_losses.append(final_loss.item())
 
+            extra = ""
+            if spatial_loss is not None:
+                extra = f", Spatial: {spatial_loss.item():.4f}"
+            if alpha_stat is not None:
+                extra += (f", alpha mean/std: {alpha_stat.mean().item():.3f}"
+                          f"/{alpha_stat.std().item():.3f}")
             print(
                 f"MPJPE: {mpjpe_loss:.4f}, "
-                f"Cos: {cos_loss.item():.4f}, Bone: {bone_length_loss.item():.4f}"
+                f"Cos: {cos_loss.item():.4f}, Bone: {bone_length_loss.item():.4f}{extra}"
             )
 
             optimizer.zero_grad()
@@ -507,6 +567,35 @@ if __name__ == '__main__':
     parser.add_argument('--random_actionformer', action='store_true',
                         help='ablation: randomly initialized ActionFormer')
 
-    args = parser.parse_args()
+    # ── 3DV revision (must match the EgoPW pretraining run being transferred) ──
+    parser.add_argument('--joint_local', type=str, default='none',
+                        choices=['none', 'cls', 'patch_mean', 'heatmap_pool'],
+                        help='per-joint DINO descriptor L_{t,j}')
+    parser.add_argument('--residual_decoder', action='store_true',
+                        help='use ResidualPoseDecoder: P = P_spatial + alpha * dP')
+    parser.add_argument('--alpha_mode', type=str, default='learned',
+                        choices=['learned', 'fixed', 'ones'],
+                        help='alpha_{t,j} source')
+    parser.add_argument('--lambda_spatial', type=float, default=0.5,
+                        help='weight on the auxiliary loss over P_spatial (0 disables)')
+    parser.add_argument('--sjt_layers', type=int, default=3,
+                        help='SpatialJointTransformer depth (0 = none)')
+    parser.add_argument('--tokenizer_norm', type=str, default='group',
+                        choices=['group', 'batch'],
+                        help='heatmap tokenizer norm ("batch" only for pre-fix checkpoints)')
+
+    # parse_known_args ignores flags owned by TrainOptions/BaseOptions
+    # (e.g. --model, --stride), which get parsed separately inside main().
+    args, _ = parser.parse_known_args()
+
+    if args.joint_local != 'none' and args.skip_temporal:
+        parser.error("--joint_local needs the DINOv2 forward pass, which "
+                     "--skip_temporal disables")
+    if args.joint_local != 'none' and args.skip_spatial:
+        parser.error("--joint_local pools patches using the predicted heatmaps, "
+                     "which --skip_spatial disables")
+    if args.joint_local != 'none' and not args.residual_decoder:
+        parser.error("--joint_local is only consumed by --residual_decoder")
+
     print(args)
     main(args)

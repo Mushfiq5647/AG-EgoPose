@@ -24,7 +24,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def main(args):
     # Create output directory
-    heatmap_dir = './utils/trained_heatmaps/bce_combined'
+    heatmap_dir = '/data/My_Backup/ag-egopose-ckpt/trained_heatmaps/bce_combined'
     os.makedirs(heatmap_dir, exist_ok=True)
     
     # Create log file for epoch results
@@ -236,5 +236,7 @@ if __name__ == '__main__':
     # Data
     parser.add_argument('--crop_size', type=int, default=256)
     
-    args = parser.parse_args()
+    # parse_known_args ignores flags owned by TrainOptions/BaseOptions
+    # (e.g. --model, --stride), which get parsed separately inside main().
+    args, _ = parser.parse_known_args()
     main(args)
